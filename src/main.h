@@ -60,7 +60,8 @@ enum FileType
     EXTLOAD_FILE,
 #endif
     FST_FILE,
-    DUMPLESS_FILE
+    DUMPLESS_FILE,
+    FSDB_FILE
 };
 
 #endif

@@ -1273,6 +1273,7 @@ GtkWidget *treeboxframe(const char *title)
                 /* fallthrough */
             case VCD_RECODER_FILE:
             case DUMPLESS_FILE:
+            case FSDB_FILE:
                 column = gtk_tree_view_column_new_with_attributes(
                     (has_supplemental_datatypes && has_supplemental_vartypes) ? "VType" : "Type",
                     renderer,

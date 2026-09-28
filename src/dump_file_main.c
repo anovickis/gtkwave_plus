@@ -1,5 +1,6 @@
 #include <config.h>
 #include <gtkwave.h>
+#include <glib/gstdio.h>
 #include "globals.h"
 #include "gw-vcd-loader.h"
 #include "gw-ghw-loader.h"
@@ -86,6 +87,114 @@ GwDumpFile *fst_main(char *fname, char *skip_start, char *skip_end)
     g_object_unref(loader);
 
     GLOBALS->is_lx2 = LXT2_IS_FST;
+
+    return file;
+}
+
+// FSDB is a proprietary Synopsys format. Reading it directly requires linking
+// their FsdbReader SDK (libnffr.so), which needs a separate "VC Apps Access
+// Program Agreement" beyond a normal Verdi/VCS license -- so instead of
+// linking that restricted-distribution library, we shell out to the
+// `fsdb2vcd` conversion utility (installed alongside Verdi/VCS) and load the
+// resulting VCD through the existing, battle-tested VCD loader. Slower than a
+// native reader would be, but needs nothing beyond what a Verdi/VCS install
+// already provides on $PATH.
+static gchar *find_fsdb2vcd(void)
+{
+    gchar *path = g_find_program_in_path("fsdb2vcd");
+    if (path != NULL) {
+        return path;
+    }
+
+    static const gchar *env_homes[] = {"VERDI_HOME", "VCS_HOME"};
+    for (guint i = 0; i < G_N_ELEMENTS(env_homes); i++) {
+        const gchar *home = g_getenv(env_homes[i]);
+        if (home == NULL) {
+            continue;
+        }
+
+        gchar *candidate = g_build_filename(home, "bin", "fsdb2vcd", NULL);
+        if (g_file_test(candidate, G_FILE_TEST_IS_EXECUTABLE)) {
+            return candidate;
+        }
+        g_free(candidate);
+    }
+
+    return NULL;
+}
+
+GwDumpFile *fsdb_main(char *fname)
+{
+    gchar *fsdb2vcd_path = find_fsdb2vcd();
+    if (fsdb2vcd_path == NULL) {
+        g_printerr("GTKWAVE | Could not find 'fsdb2vcd' (checked $PATH, $VERDI_HOME/bin, "
+                   "$VCS_HOME/bin).\n"
+                   "GTKWAVE | Reading FSDB requires a Synopsys Verdi or VCS installation "
+                   "providing this\n"
+                   "GTKWAVE | conversion utility -- gtkwave converts FSDB to VCD via fsdb2vcd "
+                   "rather than\n"
+                   "GTKWAVE | linking Synopsys's separately-licensed FsdbReader SDK directly.\n");
+        return NULL;
+    }
+
+    GError *error = NULL;
+    gchar *temp_path = NULL;
+    gint temp_fd = g_file_open_tmp("gtkwave-fsdb-XXXXXX.vcd", &temp_path, &error);
+    if (temp_fd < 0) {
+        g_printerr("GTKWAVE | Could not create a temporary file for FSDB conversion: %s\n",
+                   error != NULL ? error->message : "unknown error");
+        g_clear_error(&error);
+        g_free(fsdb2vcd_path);
+        return NULL;
+    }
+    g_close(temp_fd, NULL);
+
+    g_printerr("GTKWAVE | No native FSDB reader -- converting '%s' to VCD via fsdb2vcd...\n",
+               fname);
+
+    // The installed fsdb2vcd is a shell wrapper whose shebang (#!/bin/sh) doesn't
+    // match the syntax it actually uses, so it must be invoked via bash explicitly
+    // rather than executed directly.
+    gchar *argv[] = {(gchar *)"bash", fsdb2vcd_path, (gchar *)"-o", temp_path, fname, NULL};
+    gchar *conv_stdout = NULL;
+    gchar *conv_stderr = NULL;
+    gint exit_status = 0;
+    gboolean spawned = g_spawn_sync(NULL,
+                                    argv,
+                                    NULL,
+                                    G_SPAWN_SEARCH_PATH,
+                                    NULL,
+                                    NULL,
+                                    &conv_stdout,
+                                    &conv_stderr,
+                                    &exit_status,
+                                    &error);
+
+    g_free(fsdb2vcd_path);
+
+    if (!spawned || !g_spawn_check_wait_status(exit_status, NULL)) {
+        g_printerr("GTKWAVE | fsdb2vcd failed to convert '%s':\n", fname);
+        if (error != NULL) {
+            g_printerr("GTKWAVE | %s\n", error->message);
+        }
+        if (conv_stderr != NULL && conv_stderr[0] != '\0') {
+            g_printerr("%s\n", conv_stderr);
+        }
+        g_clear_error(&error);
+        g_free(conv_stdout);
+        g_free(conv_stderr);
+        g_unlink(temp_path);
+        g_free(temp_path);
+        return NULL;
+    }
+
+    g_free(conv_stdout);
+    g_free(conv_stderr);
+
+    GwDumpFile *file = vcd_recoder_main(temp_path);
+
+    g_unlink(temp_path);
+    g_free(temp_path);
 
     return file;
 }

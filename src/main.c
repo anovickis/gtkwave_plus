@@ -1451,6 +1451,13 @@ loader_check_head:
             /* error message printed in ghw_main() */
             vcd_exit(255);
         }
+    } else if (suffix_check(GLOBALS->loaded_file_name, ".fsdb")) {
+        GLOBALS->loaded_file_type = FSDB_FILE;
+        GLOBALS->dump_file = fsdb_main(GLOBALS->loaded_file_name);
+        if (GLOBALS->dump_file == NULL) {
+            /* error message printed in fsdb_main() */
+            vcd_exit(255);
+        }
     } else if (strlen(GLOBALS->loaded_file_name) > 4) /* case for .aet? type filenames */
     {
         char sufbuf[5];

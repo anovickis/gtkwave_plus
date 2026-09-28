@@ -739,6 +739,7 @@ static int handle_setjmp(void)
                 break;
             case GHW_FILE:
             case FST_FILE:
+            case FSDB_FILE:
             case DUMPLESS_FILE:
             case MISSING_FILE:
             default:
@@ -1346,6 +1347,11 @@ void reload_into_new_context_2(void)
 
             case GHW_FILE:
                 GLOBALS->dump_file = ghw_main(GLOBALS->loaded_file_name);
+                load_was_success = GLOBALS->dump_file != NULL;
+                break;
+
+            case FSDB_FILE:
+                GLOBALS->dump_file = fsdb_main(GLOBALS->loaded_file_name);
                 load_was_success = GLOBALS->dump_file != NULL;
                 break;
 
