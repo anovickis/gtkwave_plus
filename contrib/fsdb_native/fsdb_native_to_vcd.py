@@ -86,13 +86,71 @@ def _read_cstr_ending_at(data, end_pos):
 
 def _check_no_unaccounted_names(data, region_start, already_found):
     search_start = max(0, region_start - 400)
-    for mm in _NAME_LIKE.finditer(data, search_start, region_start):
+    _check_no_unaccounted_names_between(data, search_start, region_start, already_found)
+
+
+def _check_no_unaccounted_names_between(data, region_start, region_end, already_found):
+    for mm in _NAME_LIKE.finditer(data, region_start, region_end):
         candidate = mm.group().decode('ascii')
         if candidate not in already_found:
             raise IncompleteDecode(
                 "unaccounted-for name-like content ('%s') near the scope "
                 "table -- likely multiple top-level scopes, not supported" %
                 candidate)
+
+
+_INTERMEDIATE_SCOPE_TAIL = b'\x00\x01\x00'
+
+
+def _parse_intermediate_scope_name(data, next_start):
+    """`next_start` is the file offset where the following entity (the leaf
+    scope name, in the only depth this is used for) begins. Parses one
+    "true intermediate" scope name (has both a parent and a child scope)
+    immediately before it, per the formula confirmed in FINDINGS.md (fork
+    rounds N+5/N+6, dense-swept over 13 independent name lengths with zero
+    exceptions):
+        [[ptr_field(name_len)] [name, NOT NUL-terminated]
+         [mystery_byte][second_byte][0x00, 0x01, 0x00]]
+    where ptr_field(len) is `bytes([0x60+len, 0x00])` for len<=3 or
+    `bytes([0x60, 0x00, len-3])` for len>=4, and mystery_byte/second_byte
+    jointly encode n = name_len+3 as a radix-8 split (byte_hi = n // 8 =
+    second_byte, byte_lo = 0x60 | ((n % 8) << 2) = mystery_byte).
+
+    Returns (name, ptr_field_start). Raises IncompleteDecode if the bytes
+    don't match this exact shape -- this formula is only confirmed for a
+    single intermediate level (a 3-level top>mid>sub nest); anything that
+    doesn't fit is refused, not guessed."""
+    tail_start = next_start - 5
+    if tail_start < 0 or data[tail_start + 2:tail_start + 5] != _INTERMEDIATE_SCOPE_TAIL:
+        raise IncompleteDecode("intermediate scope tail marker not found")
+    mystery_byte, second_byte = data[tail_start], data[tail_start + 1]
+    if (mystery_byte & 0x03) != 0 or mystery_byte < 0x60:
+        raise IncompleteDecode("intermediate scope mystery byte shape mismatch")
+    n = second_byte * 8 + ((mystery_byte - 0x60) >> 2)
+    name_len = n - 3
+    if name_len < 1 or name_len > 64:
+        raise IncompleteDecode("intermediate scope name length out of range")
+
+    name_end = tail_start
+    name_start = name_end - name_len
+    if name_start < 0:
+        raise IncompleteDecode("intermediate scope name runs off start of data")
+    name_bytes = data[name_start:name_end]
+    if not all(0x20 <= b < 0x7f for b in name_bytes):
+        raise IncompleteDecode("intermediate scope name not printable ASCII")
+    name = name_bytes.decode('ascii')
+
+    if name_len <= 3:
+        ptr_field = bytes([0x60 + name_len, 0x00])
+    else:
+        if name_len - 3 > 0xff:
+            raise IncompleteDecode("intermediate scope name too long for pointer field")
+        ptr_field = bytes([0x60, 0x00, name_len - 3])
+    ptr_start = name_start - len(ptr_field)
+    if ptr_start < 0 or data[ptr_start:name_start] != ptr_field:
+        raise IncompleteDecode("intermediate scope pointer-field mismatch")
+
+    return name, ptr_start
 
 
 def parse_scope(data):
@@ -108,12 +166,28 @@ def parse_scope(data):
             "scopes) -- not supported" % len(matches))
     m = matches[0]
     depth = len(m.group(1)) // 2
-    name, name_start = _read_cstr_ending_at(data, m.start())
-    if depth != 1:
-        raise IncompleteDecode(
-            "scope nesting depth %d >= 2 not supported" % depth)
-    _check_no_unaccounted_names(data, name_start, [name])
-    return [name]
+    leaf_name, leaf_start = _read_cstr_ending_at(data, m.start())
+
+    if depth == 1:
+        _check_no_unaccounted_names(data, leaf_start, [leaf_name])
+        return [leaf_name]
+
+    if depth == 3:
+        # Exactly one "true intermediate" scope (has both a parent and a
+        # child) sits between the outermost and leaf scopes -- the shape
+        # FINDINGS.md fully characterized (rounds N+5/N+6). depth==2 (no
+        # true intermediate at all) has a documented, unresolved byte-level
+        # discrepancy from every formula tried (see FINDINGS.md, fork round
+        # N+11) and is deliberately NOT attempted here -- it falls through
+        # to the generic decline below.
+        mid_name, ptr_start = _parse_intermediate_scope_name(data, leaf_start)
+        outer_name, outer_start = _read_cstr_ending_at(data, ptr_start)
+        names = [outer_name, mid_name, leaf_name]
+        _check_no_unaccounted_names(data, outer_start, names)
+        return names
+
+    raise IncompleteDecode(
+        "scope nesting depth %d not supported (only 1 and 3 confirmed)" % depth)
 
 
 def _find_var_table_anchor(data):
@@ -653,6 +727,25 @@ def decode_vector_variable(data):
     if payload is None:
         raise IncompleteDecode("no vector payload found")
 
+    # Every currently-supported payload shape (N=2 and N=3, widths 3/4/8)
+    # starts with idx0 byte 0x07, which FINDINGS.md ties specifically to a
+    # start value of 0 (or 1) -- a non-zero start value gets a different
+    # idx0 (0x08, 0x09, 0x0c, 0x0d, 0x12, ... depending on the value and N),
+    # none of which this reader implements (see module docstring: "a
+    # non-zero start value" is a deliberate, declared gap). Checking this
+    # up front, before attempting N=2/N=3 parsing, gives an honest,
+    # accurate decline reason for those files instead of a misleading
+    # "N=3 header/trailer mismatch" (the artifact of N=2 failing silently
+    # and N=3 being tried next, purely because both happen to share the
+    # same idx0==0x07 precondition) -- confirmed these are genuinely
+    # single-transition or non-zero-start-value vectors, not undetected
+    # N=4+ files, by direct inspection of every file that previously hit
+    # that message in the corpus.
+    if payload[0] != 0x07:
+        raise IncompleteDecode(
+            "vector payload start-value tag 0x%02x (only tag 0x07 -- "
+            "zero start value -- is supported)" % payload[0])
+
     try:
         x, final_value, width = decode_n2_vector_payload(payload)
         delta = parse_delta_dictionary(data, dict_size=1)[0]
@@ -714,10 +807,26 @@ def decode_file(data):
         # cannot tell us whether more variables were declared afterward in
         # the real file. Rather than silently emit a VCD that's missing
         # trailing variables, scan the gap between where parsing stopped
-        # and the table's own end marker for any unaccounted-for printable-
-        # ASCII name-like content; if there's any, refuse rather than risk
-        # an incomplete-but-"successful" result.
-        _check_no_unaccounted_names(data, table_end_pos, [name])
+        # for the vector variable and the table's own end marker for any
+        # unaccounted-for printable-ASCII name-like content; if there's
+        # any, refuse rather than risk an incomplete-but-"successful"
+        # result. This code path is only reached when parse_variables
+        # found TABLE_END_MARKER landing immediately after the vector
+        # variable's own fixed-width record (the "not shares_table" case),
+        # i.e. table_end_pos is exactly len(TABLE_END_MARKER) bytes past
+        # where parsing stopped -- so gap_start below is that exact point,
+        # not an approximation.
+        #
+        # NOTE: this must be a tightly BOUNDED scan (only the true gap),
+        # not an unbounded lookback from table_end_pos -- an earlier version
+        # of this check used _check_no_unaccounted_names's fixed 400-byte
+        # lookback here, which also swept backward across the *already*
+        # parsed scope table (and its legitimate scope name(s)), producing
+        # false "multiple top-level scopes" declines on perfectly-decodable
+        # single-top-level-scope files whenever a scope name happened to
+        # fall within that window.
+        gap_start = table_end_pos - len(TABLE_END_MARKER)
+        _check_no_unaccounted_names_between(data, gap_start, table_end_pos, [name])
     elif scalar_names:
         # All-scalar files: parse_variables() genuinely consumes the whole
         # table up to its real end marker in this case, so no extra
