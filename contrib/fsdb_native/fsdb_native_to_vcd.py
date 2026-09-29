@@ -23,8 +23,14 @@ anything it isn't sure about and lets the (much slower, but universally
 correct) fsdb2vcd conversion path handle it.
 
 Known, deliberate gaps (all cause a clean refusal, never a wrong answer):
-  - Vector (multi-bit) signals with more than 3 real transitions, or with a
-    single transition, or a non-zero start value.
+  - Vector (multi-bit) signals with more than 3 real transitions.
+  - Vector signals with 2 or 3 transitions whose start value is not zero.
+    (A single-transition (N=1) vector with a non-zero start value IS
+    supported, but only when the start value is recoverable with full
+    confidence: width=3/4 via a literal start-value bit-array, or a small
+    set of width=4/8 "special" start values recognized by exact byte
+    signature. Other N=1 shapes -- width=8 with a start value outside that
+    signature set, and widths other than 3/4/8 -- still decline cleanly.)
   - Vector widths other than 3, 4, or 8 bits.
   - Two or more vector variables sharing one compressed value block.
   - 4-state (0/1/x/z) values.
@@ -457,8 +463,13 @@ def decode_scalars(data, names):
 # =============================================================================
 # Vector (multi-bit) decoding -- verbatim port of the validated subset of
 # fsdb_vector_n2_poc.py: N=2 (any of widths 3/4/8) and N=3 (width=4 only,
-# non-ambiguous case). N=1, N=4, N>=5, multi-variable-shared-payload, and
-# any width outside {3,4,8} are all deliberately NOT ported here -- each
+# non-ambiguous case), plus an N=1 (single transition) decoder ported from
+# the separate, standalone fsdb_vector_poc.py prototype (FINDINGS.md rounds
+# N+15/N+20/N+21/N+22 -- that prototype was validated against real files but
+# never wired into this consolidated script, which is why N=1 vectors with a
+# non-zero start value were declining here even though the underlying
+# encoding was already solved). N=4, N>=5, multi-variable-shared-payload,
+# and any width outside {3,4,8} are all deliberately NOT ported here -- each
 # only ever yields a *partial* result in the original research (final value
 # only, or an inherently ambiguous shape), which can never satisfy this
 # script's all-or-nothing "full history" contract. See module docstring.
@@ -469,6 +480,113 @@ PREFIX_WIDTH3_START0 = bytes.fromhex('07040003000000304300')
 PREFIX_WIDTH8_START0 = bytes.fromhex('07040008000000304300')
 WIDTH8_BODY_PREFIX = bytes.fromhex('a0000101')
 SEPARATOR = b'\x00\x01'
+
+# Every N=1 (single-transition) vector payload shares one overall shape:
+#   byte[0]           = idx0 (varies with the transition's START value)
+#   byte[1:3]         = constant 04 00
+#   byte[3:7]         = bit_width, little-endian uint32
+#   byte[7]           = constant 0x30
+#   byte[8:-4-width]  = "start-value region" -- content depends on idx0
+#   byte[-4-width:-4] = the transition's END value: one byte per bit,
+#                       MSB-first, each literally 0x00 or 0x01 (confirmed
+#                       unconditionally, for any width/value -- FINDINGS.md
+#                       round N+13)
+#   byte[-4:]         = trailer, always c1 21 00 00
+#
+# Two independently-confirmed shapes for the start-value region:
+#
+# 1. "Generic" shape: idx0=0x12 at width=4 (FINDINGS.md round N+15/N+20,
+#    exhaustively confirmed for all 12 non-special width=4 start values), or
+#    idx0=0x10 at width=3 -- the start-value region is EXACTLY [width bytes:
+#    a literal start-value array, the same one-byte-per-bit MSB-first
+#    scheme as the end value] + [00 01 separator]. The width=3 case was
+#    previously only characterized as "idx0 is always 0x10, no special/
+#    non-special split, no formula found" (FINDINGS.md round N+20) -- nobody
+#    had actually tried decoding that region as a literal bit-array; it
+#    turns out to be the exact same generic scheme as width=4's idx0=0x12,
+#    just keyed by a different (but still constant, not value-dependent)
+#    idx0. Directly re-verified here against all 6 real width=3 N=1 corpus
+#    files (start values 0, 0, 2, 3, 4, 7) against their .vcd ground truth.
+#
+# 2. "Special" shape: idx0 in {0x07, 0x08, 0x09}. The start-value region's
+#    exact bytes are a reproducible, deterministic function of the start
+#    value alone (confirmed: files with the same start value but different
+#    end values/delta times produce byte-identical start-value regions),
+#    but no general formula for it is known -- only a handful of exact
+#    byte-for-byte signatures have been confirmed against real ground truth
+#    (FINDINGS.md rounds N+13/N+14/N+20/N+21/N+22). Anything not an exact
+#    match against KNOWN_N1_SIGNATURES below would decode the END value
+#    correctly but cannot recover the START value; per this project's
+#    all-or-nothing discipline, that case declines rather than guesses (see
+#    decode_n1_vector_payload).
+KNOWN_N1_SIGNATURES = {
+    # width=4 special start values {0, 1, 8, 15} (idx0 0x07 for 0/1, 0x08
+    # for 8/15 -- FINDINGS.md round N+20's idx0-as-f(start) formula). Each
+    # signature confirmed identical across multiple independent real corpus
+    # files sharing the same start value but different end values (0:
+    # p004/z6s00; 1: t2001/z6s01; 8: n1s8/t2008/z6s08; 15: n1sf/z6s15).
+    (4, bytes.fromhex('430008000001')): 0,
+    (4, bytes.fromhex('430008010001')): 1,
+    (4, bytes.fromhex('014400070001')): 8,
+    (4, bytes.fromhex('014000070001')): 15,
+    # width=8 special start values {0, 0xff} (idx0 0x07 for 0, 0x08 for
+    # 0xff -- FINDINGS.md round N+13/N+14). Confirmed identical across
+    # p008/p08b/p08c/r800 (start=0) and p08d/r8ff (start=0xff).
+    (8, bytes.fromhex('4300a0000a01')): 0,
+    (8, bytes.fromhex('01c0000b0001')): 0xff,
+}
+
+
+def decode_n1_vector_payload(payload):
+    """Returns (start_value, end_value, width) for a single-transition
+    vector payload, or raises IncompleteDecode. Only ever returns a result
+    when BOTH the start and end value are known with full confidence --
+    this reader has no use for a partial ("end value only") result, since
+    it can never produce a complete, t=0-inclusive VCD history without the
+    start value."""
+    if len(payload) < 12 or payload[1:3] != b'\x04\x00' or payload[7] != 0x30:
+        raise IncompleteDecode("N=1: payload header shape mismatch")
+    width = int.from_bytes(payload[3:7], 'little')
+    if width not in (3, 4, 8):
+        raise IncompleteDecode("N=1: unsupported width %d" % width)
+    if payload[-4:] != TRAILER:
+        raise IncompleteDecode("N=1: trailer mismatch")
+
+    idx0 = payload[0]
+
+    if (idx0, width) in ((0x12, 4), (0x10, 3)):
+        if len(payload) != 14 + 2 * width:
+            raise IncompleteDecode(
+                "N=1: unexpected payload length for the generic "
+                "start-array shape (idx0=0x%02x, width=%d)" % (idx0, width))
+        start_array = payload[8:8 + width]
+        sep = payload[8 + width:10 + width]
+        end_array = payload[10 + width:10 + 2 * width]
+        if sep != SEPARATOR:
+            raise IncompleteDecode(
+                "N=1: missing 00 01 separator after start-value array")
+        if any(b not in (0, 1) for b in start_array) or \
+                any(b not in (0, 1) for b in end_array):
+            raise IncompleteDecode(
+                "N=1: start/end array is not all literal 0/1 bytes")
+        return _bits_to_int(start_array), _bits_to_int(end_array), width
+
+    if idx0 in (0x07, 0x08, 0x09) and width in (4, 8):
+        mystery = payload[8:len(payload) - 4 - width]
+        start_value = KNOWN_N1_SIGNATURES.get((width, mystery))
+        if start_value is None:
+            raise IncompleteDecode(
+                "N=1: start-value region %s (idx0=0x%02x, width=%d) is "
+                "not a known signature" % (mystery.hex(), idx0, width))
+        end_array = payload[-4 - width:-4]
+        if any(b not in (0, 1) for b in end_array):
+            raise IncompleteDecode(
+                "N=1: signature-matched end-value array is not all "
+                "literal 0/1 bytes")
+        return start_value, _bits_to_int(end_array), width
+
+    raise IncompleteDecode(
+        "N=1: no known decode for idx0=0x%02x width=%d" % (idx0, width))
 TRAILER = b'\xc1\x21\x00\x00'
 
 WIDTH8_X_SIGNATURES = {
@@ -718,33 +836,43 @@ def decode_n3_vector_payload(payload):
 
 def decode_vector_variable(data):
     """Returns (width, [(time, value), ...]) -- a full, absolute-time
-    history including t=0 -- or raises IncompleteDecode. Tries N=2 then
-    N=3, exactly mirroring the dispatch order established (and validated)
-    in fsdb_decode_all.py's decode_vector_variable(), minus the N=1/N=4/
-    multi-variable fallbacks that function also tries (those never yield a
-    full history -- see this module's docstring)."""
+    history including t=0 -- or raises IncompleteDecode. Tries N=1, then
+    N=2, then N=3. N=1 is tried first since its payload shape is the most
+    specific (fixed length for the generic case, exact byte signature for
+    the special case) and is cheap to rule out; it also naturally covers
+    the N=1/idx0=0x07/zero-start-value files that used to fall through to
+    the N=3 attempt and raise a misleading "N=3 header/trailer mismatch" or
+    "N=3: 0 candidates resolved" (those files were genuinely single-
+    transition, not unresolved N=3 value combinations). N=4, N>=5,
+    multi-variable-shared-payload, and any width outside {3,4,8} are not
+    attempted (see this module's docstring)."""
     payload = find_vector_payload(data)
     if payload is None:
         raise IncompleteDecode("no vector payload found")
 
-    # Every currently-supported payload shape (N=2 and N=3, widths 3/4/8)
-    # starts with idx0 byte 0x07, which FINDINGS.md ties specifically to a
-    # start value of 0 (or 1) -- a non-zero start value gets a different
-    # idx0 (0x08, 0x09, 0x0c, 0x0d, 0x12, ... depending on the value and N),
-    # none of which this reader implements (see module docstring: "a
-    # non-zero start value" is a deliberate, declared gap). Checking this
-    # up front, before attempting N=2/N=3 parsing, gives an honest,
-    # accurate decline reason for those files instead of a misleading
-    # "N=3 header/trailer mismatch" (the artifact of N=2 failing silently
-    # and N=3 being tried next, purely because both happen to share the
-    # same idx0==0x07 precondition) -- confirmed these are genuinely
-    # single-transition or non-zero-start-value vectors, not undetected
-    # N=4+ files, by direct inspection of every file that previously hit
-    # that message in the corpus.
+    try:
+        start_value, end_value, width = decode_n1_vector_payload(payload)
+        delta = parse_delta_dictionary(data, dict_size=1)[0]
+        return width, [(0, start_value), (delta, end_value)]
+    except IncompleteDecode:
+        pass
+
+    # Every currently-supported N=2/N=3 payload shape (widths 3/4/8) starts
+    # with idx0 byte 0x07, which FINDINGS.md ties specifically to a start
+    # value of 0 (or 1) -- a non-zero start value gets a different idx0
+    # (0x08, 0x09, 0x0c, 0x0d, 0x12, ... depending on the value and N). For
+    # N=2/N=3 (2 or 3 real transitions), none of those non-0x07 shapes are
+    # understood (only the N=1 case above has known decodes for some of
+    # them -- see KNOWN_N1_SIGNATURES/decode_n1_vector_payload), so this
+    # reader declines the rest with an honest, accurate reason instead of a
+    # misleading "N=3 header/trailer mismatch" (confirmed these really are
+    # non-zero-start-value, N>=2 vectors by direct inspection of every file
+    # that previously hit that message in the corpus).
     if payload[0] != 0x07:
         raise IncompleteDecode(
-            "vector payload start-value tag 0x%02x (only tag 0x07 -- "
-            "zero start value -- is supported)" % payload[0])
+            "vector payload start-value tag 0x%02x (N=1 single-transition "
+            "decode already tried and failed above; for 2+ transitions "
+            "only tag 0x07 -- zero start value -- is supported)" % payload[0])
 
     try:
         x, final_value, width = decode_n2_vector_payload(payload)
