@@ -14,3 +14,13 @@ raised during day-to-day use of this fork. Not scoped or prioritized yet.
   derived/virtual signal from an expression over existing signals (e.g.
   `sig_a AND sig_b`).
 - **Search is hard to use.** The existing signal search UX needs rework.
+- **No cone-of-logic (fan-in) view.** No way to see everything that
+  transitively feeds a signal's value.
+- **No driver view.** No way to jump to/see the immediate driver(s) of a
+  signal (the assign/always block that sets it).
+- **No fan-out view.** The inverse of cone-of-logic: no way to see
+  everything a signal transitively affects downstream.
+- **No load/reader view.** The inverse of driver view: no way to see
+  everything that reads/consumes a signal.
+- **No schematic view.** No visual schematic/structural diagram of the
+  logic around a signal.
