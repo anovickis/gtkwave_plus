@@ -27,7 +27,10 @@
 #include "lx2.h"
 #include "tcl_helper.h"
 #include "signal_list.h"
-#include "gw-named-marker-dialog.h"
+#include "signal_popover.h"
+#include "console_panel.h"
+#include "marker_panel.h"
+#include "source_panel.h"
 #include <cocoa_misc.h>
 #include <assert.h>
 
@@ -195,46 +198,52 @@ static void menu_def_ruler(gpointer null_data, guint callback_action, GtkWidget 
 
 /* marker locking */
 
+/* Scans for the next enabled named marker in `direction` (+1/-1) from
+ * GLOBALS->named_marker_lock_idx, wrapping around. On success, jumps the
+ * primary marker to it and updates named_marker_lock_idx. Returns FALSE (and
+ * leaves everything untouched) if no named marker is enabled at all. */
+static gboolean lock_marker_scan(int direction)
+{
+    GwNamedMarkers *markers = gw_project_get_named_markers(GLOBALS->project);
+    guint num_markers = gw_named_markers_get_number_of_markers(markers);
+    gint ent_idx = GLOBALS->named_marker_lock_idx;
+
+    for (guint i = 0; i < num_markers; i++) {
+        ent_idx += direction;
+        if (ent_idx < 0) {
+            ent_idx = (gint)num_markers - 1;
+        } else if (ent_idx >= (gint)num_markers) {
+            ent_idx = 0;
+        }
+
+        GwMarker *candidate = gw_named_markers_get(markers, ent_idx);
+        if (gw_marker_is_enabled(candidate)) {
+            GLOBALS->named_marker_lock_idx = ent_idx;
+
+            GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
+            gw_marker_set_position(primary_marker, gw_marker_get_position(candidate));
+            gw_marker_set_enabled(primary_marker, TRUE);
+
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 static void lock_marker_left(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
     (void)null_data;
     (void)callback_action;
     (void)widget;
 
-    g_error("lock_marker_left disabled");
+    if (!lock_marker_scan(-1)) {
+        return;
+    }
 
-    // int ent_idx = GLOBALS->named_marker_lock_idx;
-    // int i;
-    // int success = 0;
-
-    // if (ent_idx < 0)
-    //     ent_idx = WAVE_NUM_NAMED_MARKERS;
-    // ent_idx--;
-    // if (ent_idx < 0)
-    //     ent_idx = WAVE_NUM_NAMED_MARKERS - 1;
-
-    // for (i = 0; i < WAVE_NUM_NAMED_MARKERS; i++) {
-    //     if (GLOBALS->named_markers[ent_idx] >= 0) {
-    //         success = 1;
-    //         break;
-    //     }
-
-    //     ent_idx--;
-    //     if (ent_idx < 0)
-    //         ent_idx = WAVE_NUM_NAMED_MARKERS - 1;
-    // }
-
-    // if (!success) {
-    //     ent_idx = 0;
-    //     GLOBALS->named_markers[ent_idx] = GLOBALS->tims.marker;
-    // }
-
-    // GLOBALS->named_marker_lock_idx = ent_idx;
-    // GLOBALS->tims.marker = GLOBALS->named_markers[ent_idx];
-
-    // update_time_box();
-    // GLOBALS->signalwindow_width_dirty = 1;
-    // redraw_signals_and_waves();
+    update_time_box();
+    GLOBALS->signalwindow_width_dirty = 1;
+    redraw_signals_and_waves();
 }
 
 static void lock_marker_right(gpointer null_data, guint callback_action, GtkWidget *widget)
@@ -243,41 +252,13 @@ static void lock_marker_right(gpointer null_data, guint callback_action, GtkWidg
     (void)callback_action;
     (void)widget;
 
-    g_error("lock_marker_right disabled");
+    if (!lock_marker_scan(1)) {
+        return;
+    }
 
-    // int ent_idx = GLOBALS->named_marker_lock_idx;
-    // int i;
-    // int success = 0;
-
-    // if (ent_idx < 0)
-    //     ent_idx = -1; /* not really necessary */
-    // ent_idx++;
-    // if (ent_idx > (WAVE_NUM_NAMED_MARKERS - 1))
-    //     ent_idx = 0;
-
-    // for (i = 0; i < WAVE_NUM_NAMED_MARKERS; i++) {
-    //     if (GLOBALS->named_markers[ent_idx] >= 0) {
-    //         success = 1;
-    //         break;
-    //     }
-
-    //     ent_idx++;
-    //     if (ent_idx > (WAVE_NUM_NAMED_MARKERS - 1))
-    //         ent_idx = 0;
-    // }
-
-    // if (!success) {
-    //     ent_idx = 0;
-    //     GLOBALS->named_markers[ent_idx] = GLOBALS->tims.marker;
-    // }
-
-    // GLOBALS->named_marker_lock_idx = ent_idx;
-    // GLOBALS->tims.marker = GLOBALS->named_markers[ent_idx];
-
-    // update_time_box();
-
-    // GLOBALS->signalwindow_width_dirty = 1;
-    // redraw_signals_and_waves();
+    update_time_box();
+    GLOBALS->signalwindow_width_dirty = 1;
+    redraw_signals_and_waves();
 }
 
 static void unlock_marker(gpointer null_data, guint callback_action, GtkWidget *widget)
@@ -2620,32 +2601,15 @@ void menu_print(gpointer null_data, guint callback_action, GtkWidget *widget)
 }
 
 /**/
-void menu_markerbox_callback(GtkWidget *widget, gpointer data)
-{
-    (void)widget;
-    (void)data;
-}
-
 void menu_markerbox(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
     (void)null_data;
     (void)callback_action;
     (void)widget;
 
-    GwNamedMarkers *markers = gw_project_get_named_markers(GLOBALS->project);
-    GtkWidget *dialog = gw_named_marker_dialog_new(markers);
-
-    // GtkWidget *dialog = g_object_new(GTK_TYPE_DIALOG, "use-header-bar", 1, NULL);
-    // gtk_dialog_add_button(GTK_DIALOG(dialog), "OK", GTK_RESPONSE_OK);
-    // gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
-
-    // GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    // gtk_container_add(GTK_CONTAINER(content), gtk_label_new("label"));
-    // gtk_widget_show_all(content);
-
-    gtk_dialog_run(GTK_DIALOG(dialog));
-
-    // markerbox("Markers", G_CALLBACK(menu_markerbox_callback));
+    gboolean visible =
+        gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_MSCMD]));
+    marker_panel_set_visible(visible);
 }
 
 void copy_pri_b_marker(gpointer null_data, guint callback_action, GtkWidget *widget)
@@ -2808,6 +2772,15 @@ void menu_showchangeall_cleanup(GtkWidget *widget, gpointer data)
     GLOBALS->signalwindow_width_dirty = 1;
     redraw_signals_and_waves();
     DEBUG(printf("menu_showchangeall_cleanup()\n"));
+}
+
+void menu_quick_format(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    signal_popover_show(GLOBALS->popup_menu_widget, GLOBALS->popup_menu_x, GLOBALS->popup_menu_y);
 }
 
 void menu_showchangeall(gpointer null_data, guint callback_action, GtkWidget *widget)
@@ -3200,11 +3173,21 @@ void menu_write_save_cleanup(GtkWidget *widget, gpointer data)
         fprintf(stderr, "Error opening save file '%s' for writing.\n", *GLOBALS->fileselbox_text);
         perror("Why");
         errno = 0;
+        GLOBALS->save_success_menu_c_1 = 0;
+
+        gchar *msg =
+            g_strdup_printf("Problem writing save file '%s'.\n", *GLOBALS->fileselbox_text);
+        status_text(msg);
+        g_free(msg);
     } else {
         write_save_helper(*GLOBALS->fileselbox_text, wave);
         wave_gconf_client_set_string("/current/savefile", GLOBALS->filesel_writesave);
         GLOBALS->save_success_menu_c_1 = 1;
         fclose(wave);
+
+        gchar *msg = g_strdup_printf("Wrote save file '%s' OK.\n", *GLOBALS->fileselbox_text);
+        status_text(msg);
+        g_free(msg);
     }
 }
 
@@ -3248,15 +3231,9 @@ void menu_write_save_file(gpointer null_data, guint callback_action, GtkWidget *
         GLOBALS->filesel_ok = 1;
         GLOBALS->save_success_menu_c_1 = 0;
         GLOBALS->fileselbox_text = &GLOBALS->filesel_writesave;
+        /* status_text() reporting now happens inside menu_write_save_cleanup()
+         * itself, so it also covers the "Save As" dialog path. */
         menu_write_save_cleanup(NULL, NULL);
-        if (GLOBALS->save_success_menu_c_1 != 2) /* cancelled */
-        {
-            if (GLOBALS->save_success_menu_c_1) {
-                status_text("Wrote save file OK.\n");
-            } else {
-                status_text("Problem writing save file.\n");
-            }
-        }
     }
 }
 /**/
@@ -3274,6 +3251,10 @@ void menu_read_save_cleanup(GtkWidget *widget, gpointer data)
         wname = *GLOBALS->fileselbox_text;
         wave_gconf_client_set_string("/current/savefile", wname);
         read_save_helper(wname, NULL, NULL, NULL, NULL, NULL);
+
+        gchar *msg = g_strdup_printf("Loaded save file '%s'.\n", wname);
+        status_text(msg);
+        g_free(msg);
     }
 }
 
@@ -3803,11 +3784,16 @@ char **grow_array(char ***src, int *siz, char *str)
 static const gchar *EDITORS_WITH_LINE_NUMBER_SUPPORT[] =
     {"vi", "vim", "gvim", "emacs", "gedit", "code", "codium", NULL};
 
-static void open_index_in_forked_editor(uint32_t idx, int typ)
+// Resolve a stem index to a usable, existing file path + line number,
+// following the same relative-path fallback external editors have always
+// used. Shared by both the external-editor path and the embedded source
+// panel so they agree on how files are found. Returns FALSE (after showing
+// an error dialog) if the stem is missing or the file can't be located.
+static gboolean resolve_stem_path(uint32_t idx, int typ, char **out_path, guint32 *out_line)
 {
     if (idx == 0) {
         simplereqbox("Open Source", 400, "Source stem not present!", "OK", NULL, NULL, 1);
-        return;
+        return FALSE;
     }
 
     GwStems *stems = gw_dump_file_get_stems(GLOBALS->dump_file);
@@ -3829,7 +3815,8 @@ static void open_index_in_forked_editor(uint32_t idx, int typ)
             int wid = MIN(clen * 10, 400);
 
             simplereqbox("Could not open file!", wid, stem.path, "OK", NULL, NULL, 1);
-            return;
+            g_free(path);
+            return FALSE;
         }
 
         g_free(path);
@@ -3837,6 +3824,13 @@ static void open_index_in_forked_editor(uint32_t idx, int typ)
         free_2(rp);
     }
 
+    *out_path = path;
+    *out_line = stem.line_number;
+    return TRUE;
+}
+
+static void open_index_in_forked_editor(const char *path, guint32 line_number)
+{
     const gchar *editor_name = GLOBALS->editor_name;
     if (editor_name == NULL) {
         editor_name = g_getenv("GTKWAVE_EDITOR");
@@ -3845,7 +3839,7 @@ static void open_index_in_forked_editor(uint32_t idx, int typ)
     if (editor_name != NULL) {
         gchar *editor_command;
         if (strstr(editor_name, "%s") != NULL) {
-            char *lineno_str = g_strdup_printf("%d", stem.line_number);
+            char *lineno_str = g_strdup_printf("%d", line_number);
 
             GRegex *d_re = g_regex_new("%d", 0, 0, NULL);
             GRegex *s_re = g_regex_new("%s", 0, 0, NULL);
@@ -3856,7 +3850,7 @@ static void open_index_in_forked_editor(uint32_t idx, int typ)
             editor_command = g_regex_replace_literal(s_re, t, -1, 0, path, 0, NULL);
             g_free(t);
         } else if (g_strv_contains(EDITORS_WITH_LINE_NUMBER_SUPPORT, editor_name)) {
-            editor_command = g_strdup_printf("%s %s +%d", editor_name, path, stem.line_number);
+            editor_command = g_strdup_printf("%s %s +%d", editor_name, path, line_number);
         } else {
             editor_command = g_strdup_printf("%s %s", editor_name, path);
         }
@@ -3888,6 +3882,32 @@ static void open_index_in_forked_editor(uint32_t idx, int typ)
 
         g_free(uri);
         g_object_unref(file);
+    }
+}
+
+// Dispatch a cross-probe request to either the embedded source panel or an
+// external editor. An explicitly configured editor (editor_name or
+// $GTKWAVE_EDITOR) keeps taking priority, so existing setups are
+// unaffected; otherwise this now opens the embedded panel instead of the
+// old "hand off to the desktop's default app" fallback.
+static void open_source_reference(uint32_t idx, int typ)
+{
+    char *path = NULL;
+    guint32 line_number = 0;
+
+    if (!resolve_stem_path(idx, typ, &path, &line_number)) {
+        return;
+    }
+
+    const gchar *editor_name = GLOBALS->editor_name;
+    if (editor_name == NULL) {
+        editor_name = g_getenv("GTKWAVE_EDITOR");
+    }
+
+    if (editor_name != NULL) {
+        open_index_in_forked_editor(path, line_number);
+    } else {
+        source_panel_show_file_line(path, line_number);
     }
 
     g_free(path);
@@ -3975,7 +3995,7 @@ static void menu_open_hierarchy_2(gpointer null_data,
                 idx = t_forced->t_stem;
             }
 
-            open_index_in_forked_editor(idx, typ);
+            open_source_reference(idx, typ);
         }
     }
 }
@@ -4007,7 +4027,7 @@ static void menu_open_hierarchy_2a(gpointer null_data,
                     idx = t_forced->t_stem;
                 }
 
-                open_index_in_forked_editor(idx, typ);
+                open_source_reference(idx, typ);
             }
         }
     }
@@ -4782,6 +4802,73 @@ void menu_show_grid(gpointer null_data, guint callback_action, GtkWidget *widget
     DEBUG(printf("Show Grid\n"));
 }
 
+void menu_show_console(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    GLOBALS->console_visible =
+        gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWCONSOLE]));
+    console_panel_set_visible(GLOBALS->console_visible);
+}
+
+void menu_show_source_panel(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    gboolean visible =
+        gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWSOURCE]));
+    source_panel_set_visible(visible);
+}
+
+void menu_show_toolbar(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    GLOBALS->show_toolbar =
+        gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWTOOLBAR]));
+    if (GLOBALS->missing_file_toolbar) {
+        gtk_widget_set_visible(GLOBALS->missing_file_toolbar, GLOBALS->show_toolbar);
+    }
+}
+
+void menu_show_cursor_snap(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    gboolean active =
+        gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSNAPCURSOR]));
+
+    if (active) {
+        GLOBALS->cursor_snap = GLOBALS->cursor_snap_last > 0 ? GLOBALS->cursor_snap_last : 8;
+    } else {
+        if (GLOBALS->cursor_snap > 0) {
+            GLOBALS->cursor_snap_last = GLOBALS->cursor_snap;
+        }
+        GLOBALS->cursor_snap = 0;
+    }
+}
+
+void menu_show_hierarchy(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    GLOBALS->sst_expanded =
+        gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWHIER]));
+    if (GLOBALS->expanderwindow) {
+        gtk_expander_set_expanded(GTK_EXPANDER(GLOBALS->expanderwindow), GLOBALS->sst_expanded);
+    }
+}
+
 /**/
 void menu_show_wave_highlight(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
@@ -5317,11 +5404,11 @@ static gtkwave_mlist_t menu_items[] = {
                 "<Item>"),
     WAVE_GTKIFE("/Time/Page/Page ->", "<Alt>8", service_right_page_marshal, WV_MENU_TPPR, "<Item>"),
     WAVE_GTKIFE("/Time/Page/Page <-", "<Alt>7", service_left_page_marshal, WV_MENU_TPPL, "<Item>"),
-    WAVE_GTKIFE("/Markers/Show-Change Marker Data",
+    WAVE_GTKIFE("/Markers/Show Marker Panel",
                 "<Alt>M",
                 menu_markerbox,
                 WV_MENU_MSCMD,
-                "<Item>"),
+                "<ToggleItem>"),
     /* 100 */
     WAVE_GTKIFE("/Markers/Drop Named Marker", "<Alt>N", drop_named_marker, WV_MENU_MDNM, "<Item>"),
     WAVE_GTKIFE("/Markers/Collect Named Marker",
@@ -5346,11 +5433,15 @@ static gtkwave_mlist_t menu_items[] = {
                 "<Item>"),
     WAVE_GTKIFE("/Markers/<separator>", NULL, NULL, WV_MENU_SEP8, "<Separator>"),
     WAVE_GTKIFE("/Markers/Find Previous Edge",
-                NULL,
+                "bracketleft",
                 service_left_edge_marshal,
                 WV_MENU_SLE,
                 "<Item>"),
-    WAVE_GTKIFE("/Markers/Find Next Edge", NULL, service_right_edge_marshal, WV_MENU_SRE, "<Item>"),
+    WAVE_GTKIFE("/Markers/Find Next Edge",
+                "bracketright",
+                service_right_edge_marshal,
+                WV_MENU_SRE,
+                "<Item>"),
     WAVE_GTKIFE("/Markers/<separator>", NULL, NULL, WV_MENU_SEP8B, "<Separator>"),
     WAVE_GTKIFE("/Markers/Wave Scrolling", NULL, wave_scrolling_on, WV_MENU_MWSON, "<ToggleItem>"),
 
@@ -5497,6 +5588,39 @@ static gtkwave_mlist_t menu_items[] = {
     WAVE_GTKIFE("/Help/WAVE User Manual", NULL, menu_help_manual, WV_MENU_HWM, "<Item>"),
 #endif
     WAVE_GTKIFE("/Help/Wave Version", NULL, menu_version, WV_MENU_HWV, "<Item>"),
+
+    /* Appended at the end rather than grouped with the other /View/...
+     * entries above: this array's positional index for each entry must
+     * equal that entry's WV_MenuItems enum value (alt_menu() stores
+     * menu_wlist[array_index] = widget, and menu_wlist is later read back
+     * by enum value -- see alt_menu()/alt_menu_walk() in this file), and
+     * WV_MENU_VSHOWCONSOLE was added at the end of the enum, so its entry
+     * must be the last one here too. */
+    WAVE_GTKIFE("/View/Show Console",
+                "<Alt>C",
+                menu_show_console,
+                WV_MENU_VSHOWCONSOLE,
+                "<ToggleItem>"),
+    WAVE_GTKIFE("/View/Show Source Panel",
+                NULL,
+                menu_show_source_panel,
+                WV_MENU_VSHOWSOURCE,
+                "<ToggleItem>"),
+    WAVE_GTKIFE("/View/Show Toolbar",
+                NULL,
+                menu_show_toolbar,
+                WV_MENU_VSHOWTOOLBAR,
+                "<ToggleItem>"),
+    WAVE_GTKIFE("/View/Show Hierarchy",
+                NULL,
+                menu_show_hierarchy,
+                WV_MENU_VSHOWHIER,
+                "<ToggleItem>"),
+    WAVE_GTKIFE("/View/Snap Cursor to Edges",
+                NULL,
+                menu_show_cursor_snap,
+                WV_MENU_VSNAPCURSOR,
+                "<ToggleItem>"),
 };
 
 void set_scale_to_time_dimension_toggles(void)
@@ -5554,6 +5678,18 @@ void set_menu_toggles(void)
                                    GLOBALS->fullscreen);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSG]),
                                    GLOBALS->display_grid);
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWCONSOLE]),
+                                   GLOBALS->console_visible);
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWSOURCE]),
+                                   source_panel_get_visible());
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWTOOLBAR]),
+                                   GLOBALS->show_toolbar);
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSHOWHIER]),
+                                   GLOBALS->sst_expanded);
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_VSNAPCURSOR]),
+                                   GLOBALS->cursor_snap > 0);
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_MSCMD]),
+                                   marker_panel_get_visible());
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_SHW]),
                                    GLOBALS->highlight_wavewindow);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_FILL1]),
@@ -5751,6 +5887,15 @@ int set_wave_menu_accelerator(const char *str)
 /***********************/
 
 static gtkwave_mlist_t popmenu_items[] = {
+    /* Reuse existing WV_MenuItems tags below rather than adding new enum
+     * values: this array is sized independently of WV_MENU_NUMITEMS (see
+     * do_popup_menu()), but WV_MENU_NUMITEMS also sizes the *main* menu
+     * bar's static backing array in alt_menu_top(), which is only
+     * populated by its own fixed-length literal list further down this
+     * file. Growing the enum without growing that list leaves trailing
+     * NULL-path slots there and crashes decompose_path() on startup. */
+    WAVE_GTKIFE("/Quick Format...", NULL, menu_quick_format, WV_MENU_EDFH, "<Item>"),
+    WAVE_GTKIFE("/<separator>", NULL, NULL, WV_MENU_SEP5, "<Separator>"),
     WAVE_GTKIFE("/Data Format/Hex", NULL, menu_dataformat_hex, WV_MENU_EDFH, "<Item>"),
     WAVE_GTKIFE("/Data Format/Decimal", NULL, menu_dataformat_dec, WV_MENU_EDFD, "<Item>"),
     WAVE_GTKIFE("/Data Format/Signed Decimal",
@@ -5976,8 +6121,14 @@ static gtkwave_mlist_t popmenu_items[] = {
 
 void do_popup_menu(GtkWidget *my_widget, GdkEventButton *event)
 {
-    (void)my_widget;
-    (void)event;
+    GLOBALS->popup_menu_widget = my_widget;
+    if (event != NULL) {
+        GLOBALS->popup_menu_x = event->x;
+        GLOBALS->popup_menu_y = event->y;
+    } else {
+        GLOBALS->popup_menu_x = 0.0;
+        GLOBALS->popup_menu_y = 0.0;
+    }
 
     GtkWidget *menu;
     if (!GLOBALS->signal_popup_menu) {

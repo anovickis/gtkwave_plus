@@ -67,6 +67,9 @@
 #include "ptranslate.h"
 #include "ttranslate.h"
 #include "signal_list.h"
+#include "console_panel.h"
+#include "marker_panel.h"
+#include "source_panel.h"
 #include "dump_file_main.h"
 #include "gw-time-display.h"
 #include "gw-vcd-file.h"
@@ -104,6 +107,7 @@ static void switch_page(GtkNotebook *notebook, gpointer *page, guint page_num, g
     GLOBALS->use_full_precision = g_old->use_full_precision;
     GLOBALS->show_base = g_old->show_base;
     GLOBALS->display_grid = g_old->display_grid;
+    GLOBALS->console_visible = g_old->console_visible;
     GLOBALS->fullscreen = g_old->fullscreen;
     GLOBALS->show_toolbar = g_old->show_toolbar;
     GLOBALS->time_box = g_old->time_box;
@@ -467,6 +471,30 @@ static GtkWidget *toolbar_append_button(GtkWidget *toolbar,
     return GTK_WIDGET(button);
 }
 
+static void toolbar_drop_marker(GtkToolButton *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+
+    drop_named_marker(NULL, 0, NULL);
+}
+
+static void toolbar_delete_marker(GtkToolButton *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+
+    delete_unnamed_marker(NULL, 0, NULL);
+}
+
+static void toolbar_signal_search(GtkToolButton *button, gpointer data)
+{
+    (void)button;
+    (void)data;
+
+    menu_signalsearch(NULL, 0, NULL);
+}
+
 static GtkToolItem *toolbar_append_separator(GtkWidget *toolbar)
 {
     GtkToolItem *separator = gtk_separator_tool_item_new();
@@ -491,38 +519,87 @@ static GtkWidget *build_toolbar(void)
     gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_ICONS);
     gtk_toolbar_set_show_arrow(GTK_TOOLBAR(toolbar), FALSE);
 
-    toolbar_append_button(toolbar, "edit-cut", "Cut Traces", G_CALLBACK(menu_cut_traces), NULL);
-    toolbar_append_button(toolbar, "edit-copy", "Copy Traces", G_CALLBACK(menu_copy_traces), NULL);
     toolbar_append_button(toolbar,
-                          "edit-paste",
+                          "edit-cut-symbolic",
+                          "Cut Traces",
+                          G_CALLBACK(menu_cut_traces),
+                          NULL);
+    toolbar_append_button(toolbar,
+                          "edit-copy-symbolic",
+                          "Copy Traces",
+                          G_CALLBACK(menu_copy_traces),
+                          NULL);
+    toolbar_append_button(toolbar,
+                          "edit-paste-symbolic",
                           "Paste Traces",
                           G_CALLBACK(menu_paste_traces),
                           NULL);
 
     toolbar_append_separator(toolbar);
 
-    toolbar_append_button(toolbar, "zoom-fit-best", "Zoom Fit", G_CALLBACK(service_zoom_fit), NULL);
-    toolbar_append_button(toolbar, "zoom-in", "Zoom In", G_CALLBACK(service_zoom_in), NULL);
-    toolbar_append_button(toolbar, "zoom-out", "Zoom Out", G_CALLBACK(service_zoom_out), NULL);
-    toolbar_append_button(toolbar, "edit-undo", "Zoom Undo", G_CALLBACK(service_zoom_undo), NULL);
     toolbar_append_button(toolbar,
-                          "go-first",
+                          "zoom-fit-best-symbolic",
+                          "Zoom Fit",
+                          G_CALLBACK(service_zoom_fit),
+                          NULL);
+    toolbar_append_button(toolbar,
+                          "zoom-in-symbolic",
+                          "Zoom In",
+                          G_CALLBACK(service_zoom_in),
+                          NULL);
+    toolbar_append_button(toolbar,
+                          "zoom-out-symbolic",
+                          "Zoom Out",
+                          G_CALLBACK(service_zoom_out),
+                          NULL);
+    toolbar_append_button(toolbar,
+                          "edit-undo-symbolic",
+                          "Zoom Undo",
+                          G_CALLBACK(service_zoom_undo),
+                          NULL);
+    toolbar_append_button(toolbar,
+                          "go-first-symbolic",
                           "Zoom to Start",
                           G_CALLBACK(service_zoom_left),
                           NULL);
-    toolbar_append_button(toolbar, "go-last", "Zoom to End", G_CALLBACK(service_zoom_right), NULL);
+    toolbar_append_button(toolbar,
+                          "go-last-symbolic",
+                          "Zoom to End",
+                          G_CALLBACK(service_zoom_right),
+                          NULL);
 
     toolbar_append_separator(toolbar);
 
     toolbar_append_button(toolbar,
-                          "go-previous",
+                          "go-previous-symbolic",
                           "Find Previous Edge",
                           G_CALLBACK(service_left_edge),
                           NULL);
     toolbar_append_button(toolbar,
-                          "go-next",
+                          "go-next-symbolic",
                           "Find Next Edge",
                           G_CALLBACK(service_right_edge),
+                          NULL);
+
+    toolbar_append_separator(toolbar);
+
+    toolbar_append_button(toolbar,
+                          "bookmark-new-symbolic",
+                          "Insert Marker at Cursor",
+                          G_CALLBACK(toolbar_drop_marker),
+                          NULL);
+    toolbar_append_button(toolbar,
+                          "edit-delete-symbolic",
+                          "Delete Primary Marker",
+                          G_CALLBACK(toolbar_delete_marker),
+                          NULL);
+
+    toolbar_append_separator(toolbar);
+
+    toolbar_append_button(toolbar,
+                          "edit-find-symbolic",
+                          "Signal Search (Regexp)",
+                          G_CALLBACK(toolbar_signal_search),
                           NULL);
 
     toolbar_append_separator(toolbar);
@@ -533,7 +610,7 @@ static GtkWidget *build_toolbar(void)
 
     if ((GLOBALS->loaded_file_type != DUMPLESS_FILE) && (!GLOBALS->disable_menus)) {
         toolbar_append_button(toolbar,
-                              "view-refresh",
+                              "view-refresh-symbolic",
                               "Reload",
                               G_CALLBACK(menu_reload_waveform_marshal),
                               NULL);
@@ -716,6 +793,11 @@ int main_2(int opt_vcd, int argc, char *argv[])
         GLOBALS->second_page_created = old_g->second_page_created = 1;
 
         GLOBALS->notebook = old_g->notebook;
+        GLOBALS->console_vpaned = old_g->console_vpaned;
+        GLOBALS->console_text_view = old_g->console_text_view;
+        GLOBALS->console_mono_tag = old_g->console_mono_tag;
+        GLOBALS->console_bold_tag = old_g->console_bold_tag;
+        GLOBALS->console_iter = old_g->console_iter;
         GLOBALS->num_notebook_pages = old_g->num_notebook_pages;
         GLOBALS->num_notebook_pages_cumulative = old_g->num_notebook_pages_cumulative;
         GLOBALS->contexts = old_g->contexts;
@@ -770,6 +852,7 @@ int main_2(int opt_vcd, int argc, char *argv[])
         GLOBALS->ps_maxveclen = old_g->ps_maxveclen;
         GLOBALS->show_base = old_g->show_base;
         GLOBALS->display_grid = old_g->display_grid;
+        GLOBALS->console_visible = old_g->console_visible;
         GLOBALS->fullscreen = old_g->fullscreen;
         GLOBALS->show_toolbar = old_g->show_toolbar;
         GLOBALS->time_box = old_g->time_box;
@@ -1696,6 +1779,11 @@ savefile_bail:
                                                                     : WAVE_SET_TITLE_NONE,
                                       0);
 
+            if (GLOBALS->use_dark) {
+                gtk_style_context_add_class(
+                    gtk_widget_get_style_context(GLOBALS->mainwindow), "dark-mode");
+            }
+
             if ((GLOBALS->initial_window_width > 0) && (GLOBALS->initial_window_height > 0)) {
                 gtk_window_set_default_size(GTK_WINDOW(GLOBALS->mainwindow),
                                             GLOBALS->initial_window_width,
@@ -1871,8 +1959,27 @@ savefile_bail:
     }
 
     if (GLOBALS->loaded_file_type != MISSING_FILE) {
+        GLOBALS->source_hpaned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+        gtk_paned_pack1(GTK_PANED(GLOBALS->source_hpaned), panedwindow, TRUE, TRUE);
+
+        GtkWidget *side_panel = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_box_pack_start(GTK_BOX(side_panel), create_source_panel(), TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(side_panel), create_marker_panel(), FALSE, FALSE, 0);
+        gtk_widget_show(side_panel);
+
+        gtk_paned_pack2(GTK_PANED(GLOBALS->source_hpaned), side_panel, FALSE, TRUE);
+        if (GLOBALS->source_hpaned_size_cache) {
+            gtk_paned_set_position(GTK_PANED(GLOBALS->source_hpaned),
+                                   GLOBALS->source_hpaned_size_cache);
+            GLOBALS->source_hpaned_size_cache = 0;
+            /* A cached width means a .sav explicitly saved one, i.e. the
+             * panel was open -- restore that instead of leaving it hidden. */
+            source_panel_set_visible(TRUE);
+        }
+        gtk_widget_show(GLOBALS->source_hpaned);
+
         gtk_paned_pack1(GTK_PANED(GLOBALS->toppanedwindow), GLOBALS->expanderwindow, 0, 0);
-        gtk_paned_pack2(GTK_PANED(GLOBALS->toppanedwindow), panedwindow, ~0, 0);
+        gtk_paned_pack2(GTK_PANED(GLOBALS->toppanedwindow), GLOBALS->source_hpaned, ~0, 0);
         gtk_widget_show(GLOBALS->toppanedwindow);
     }
 
@@ -1977,7 +2084,24 @@ savefile_bail:
         return (0);
     }
 
-    gtk_grid_attach(GTK_GRID(whole_table), GLOBALS->notebook, 0, 1, 16, 255);
+    GLOBALS->console_vpaned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+    gtk_paned_pack1(GTK_PANED(GLOBALS->console_vpaned), GLOBALS->notebook, TRUE, TRUE);
+    gtk_paned_pack2(GTK_PANED(GLOBALS->console_vpaned), create_console_panel(), FALSE, FALSE);
+    if (GLOBALS->console_vpanedwindow_size_cache) {
+        gtk_paned_set_position(GTK_PANED(GLOBALS->console_vpaned),
+                               GLOBALS->console_vpanedwindow_size_cache);
+        GLOBALS->console_vpanedwindow_size_cache = 0;
+    }
+    /* Otherwise leave the position unset: the window isn't realized yet
+     * here, so there's no real height to compute an offset from. GtkPaned
+     * falls back to the notebook's/console's natural size requests, and
+     * create_console_panel() gives the console a small-but-visible default
+     * height for exactly this case. */
+    gtk_widget_show(GLOBALS->console_vpaned);
+
+    gtk_grid_attach(GTK_GRID(whole_table), GLOBALS->console_vpaned, 0, 1, 16, 255);
+    gtk_widget_set_hexpand(GLOBALS->console_vpaned, TRUE);
+    gtk_widget_set_vexpand(GLOBALS->console_vpaned, TRUE);
     gtk_widget_set_hexpand(GLOBALS->notebook, TRUE);
     gtk_widget_set_vexpand(GLOBALS->notebook, TRUE);
 

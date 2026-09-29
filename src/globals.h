@@ -253,6 +253,24 @@ struct Global
     gint toppanedwindow_size_cache;
     gint panedwindow_size_cache;
     gint vpanedwindow_size_cache;
+    GtkWidget *console_vpaned; /* wraps notebook + console panel, from console_panel.c */
+    gint console_vpanedwindow_size_cache;
+    GtkWidget *console_text_view; /* from console_panel.c */
+    GtkTextTag *console_mono_tag;
+    GtkTextTag *console_bold_tag;
+    GtkTextIter console_iter;
+    gboolean console_visible;
+    GtkWidget *source_hpaned; /* wraps panedwindow + source panel, from source_panel.c */
+    gint source_hpaned_size_cache;
+    GtkWidget *source_panel_root; /* top-level widget shown/hidden as a unit, from source_panel.c */
+    GtkWidget *source_text_view;
+    GtkWidget *source_path_label;
+    GtkTextTag *source_highlight_tag;
+    char *source_last_path; /* cached, avoids re-reading the file on every click */
+    guint source_last_highlighted_line;
+    GtkWidget *marker_panel_root; /* top-level widget shown/hidden as a unit, from marker_panel.c */
+    GPtrArray *marker_panel_rows; /* one GwMarkerPanelRow* per named marker, from marker_panel.c */
+    gboolean marker_panel_visible;
     GtkWidget *sstpane; /* from main.c 215 */
     GtkWidget *expanderwindow; /* from main.c 216 */
     char disable_window_manager; /* from main.c 217 */
@@ -316,6 +334,9 @@ struct Global
     char *buf_menu_c_1; /* from menu.c 270 */
     GtkWidget *signal_popup_menu; /* from menu.c */
     GtkWidget *sst_signal_popup_menu; /* from menu.c */
+    GtkWidget *popup_menu_widget; /* widget the signal popup menu was last raised on, from menu.c */
+    gdouble popup_menu_x; /* widget-relative click position, from menu.c */
+    gdouble popup_menu_y;
 
     /*
      * mouseover.c
@@ -581,6 +602,7 @@ struct Global
     char left_justify_sigs; /* from wavewindow.c 657 */
     char zoom_pow10_snap; /* from wavewindow.c 658 */
     int cursor_snap; /* from wavewindow.c 659 */
+    int cursor_snap_last; /* remembers the snap radius while temporarily disabled via the View menu toggle, from menu.c */
     float old_wvalue; /* from wavewindow.c 660 */
     GwTime zoom; /* from wavewindow.c 662 */
     GwTime scale; /* from wavewindow.c 663 */
@@ -601,6 +623,8 @@ struct Global
     GtkWidget *hscroll_wavewindow_c_2; /* from wavewindow.c 679 */
     gpointer wave_vslider2; /* from wavewindow.c 681 */
     gpointer wave_hslider; /* from wavewindow.c 682 */
+    GwMarker *dragging_named_marker; /* non-owning; set while a named marker is being
+                                         click-dragged on the wave canvas, from wavewindow.c */
     int named_marker_lock_idx; /* from menu.c */
     int which_t_color;
     char fill_in_smaller_rgb_areas_wavewindow_c_1; /* from wavewindow.c 719 */

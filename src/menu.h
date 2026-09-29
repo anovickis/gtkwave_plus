@@ -287,6 +287,11 @@ enum WV_MenuItems
     WV_MENU_HWM,
 #endif
     WV_MENU_HWV,
+    WV_MENU_VSHOWCONSOLE,
+    WV_MENU_VSHOWSOURCE,
+    WV_MENU_VSHOWTOOLBAR,
+    WV_MENU_VSHOWHIER,
+    WV_MENU_VSNAPCURSOR,
     WV_MENU_NUMITEMS
 };
 
@@ -339,6 +344,15 @@ void menu_dataformat_xlate_proc_1(gpointer null_data, guint callback_action, Gtk
 void menu_dataformat_analog_off(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_dataformat_analog_step(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_dataformat_analog_interpol(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_0(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_1(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_2(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_3(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_4(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_5(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_6(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_colorformat_7(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_quick_format(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_showchangeall(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_showchange(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_warp_traces(gpointer null_data, guint callback_action, GtkWidget *widget);
@@ -372,6 +386,11 @@ void collect_all_named_markers(gpointer null_data, guint callback_action, GtkWid
 void delete_unnamed_marker(gpointer null_data, guint callback_action, GtkWidget *widget);
 void wave_scrolling_on(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_show_grid(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_show_console(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_show_source_panel(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_show_toolbar(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_show_cursor_snap(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_show_hierarchy(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_show_mouseover(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_show_base(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_enable_dynamic_resize(gpointer null_data, guint callback_action, GtkWidget *widget);

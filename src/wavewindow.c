@@ -366,6 +366,70 @@ void button_press_release_common(void)
     gw_signal_list_force_redraw(GW_SIGNAL_LIST(GLOBALS->signalarea));
 }
 
+#define MARKER_DRAG_HIT_PIXELS 6.0
+
+/* Same pixel->time resolution as the top of button_motion_common(), factored
+ * out so named-marker drag hit-testing/tracking can share it without
+ * touching that function's existing, well-tested cursor-placement path. */
+static GwTime resolve_pixel_time(gint xin, gint yin)
+{
+    gdouble x, offset, pixstep;
+    GwTime newcurr;
+
+    if (xin < 0)
+        xin = 0;
+    if (xin > (GLOBALS->wavewidth - 1))
+        xin = (GLOBALS->wavewidth - 1);
+
+    x = xin;
+
+    pixstep = ((gdouble)GLOBALS->nsperframe) / ((gdouble)GLOBALS->pixelsperframe);
+    newcurr = (GwTime)(offset = ((gdouble)GLOBALS->tims.start) + (x * pixstep));
+
+    if (offset - newcurr > 0.5) {
+        newcurr++;
+    }
+
+    if (newcurr > GLOBALS->tims.last) {
+        newcurr = GLOBALS->tims.last;
+    }
+    if (newcurr > GLOBALS->tims.end) {
+        newcurr = GLOBALS->tims.end;
+    }
+    if (newcurr < GLOBALS->tims.start) {
+        newcurr = GLOBALS->tims.start;
+    }
+
+    GwTimeRange *time_range = gw_dump_file_get_time_range(GLOBALS->dump_file);
+
+    newcurr = time_trunc(newcurr);
+    if (newcurr < 0)
+        newcurr = gw_time_range_get_start(time_range);
+
+    return cook_markertime(newcurr, xin, yin);
+}
+
+/* Finds an enabled named marker within MARKER_DRAG_HIT_PIXELS of xin, or
+ * NULL. Used on button-press to decide whether a click should grab an
+ * existing named marker instead of moving the primary cursor. */
+static GwMarker *find_named_marker_near_pixel(gint xin, gint yin)
+{
+    if (GLOBALS->dump_file == NULL) {
+        return NULL;
+    }
+
+    GwTime click_time = resolve_pixel_time(xin, yin);
+
+    GwNamedMarkers *markers = gw_project_get_named_markers(GLOBALS->project);
+    GwTime delta = 0;
+    GwMarker *closest = gw_named_markers_find_closest(markers, click_time, &delta);
+    if (closest != NULL && (ABS(delta) * GLOBALS->pxns) <= MARKER_DRAG_HIT_PIXELS) {
+        return closest;
+    }
+
+    return NULL;
+}
+
 static void button_motion_common(gint xin, gint yin, int pressrel, int is_button_2)
 {
     gdouble x, offset, pixstep;
@@ -551,7 +615,13 @@ static gint motion_notify_event(GtkWidget *widget, GdkEventMotion *event)
         }
 
         if (state & bmask[GLOBALS->in_button_press_wavewindow_c_1]) {
-            button_motion_common(x, y, 0, 0);
+            if (GLOBALS->dragging_named_marker != NULL) {
+                gw_marker_set_position(GLOBALS->dragging_named_marker,
+                                       resolve_pixel_time((gint)x, (gint)y));
+                gtk_widget_queue_draw(GLOBALS->wavearea);
+            } else {
+                button_motion_common(x, y, 0, 0);
+            }
         }
 
         /* warp selected signals if CTRL is pressed */
@@ -860,7 +930,14 @@ static gint button_press_event(GtkWidget *widget, GdkEventButton *event)
                                        ? gw_marker_get_position(primary_marker)
                                        : -1; // TODO: don't use sentinel value
 
-        button_motion_common(event->x, event->y, 1, 0);
+        /* Clicking on (or very near) an existing named marker grabs it for
+         * dragging instead of moving the primary cursor -- otherwise named
+         * markers have no direct-manipulation way to reposition them. */
+        GLOBALS->dragging_named_marker = find_named_marker_near_pixel(event->x, event->y);
+
+        if (GLOBALS->dragging_named_marker == NULL) {
+            button_motion_common(event->x, event->y, 1, 0);
+        }
         GLOBALS->tims.timecache = GLOBALS->tims.start;
 
 #ifdef WAVE_ALLOW_GTK3_SEAT_VS_POINTER_GRAB_UNGRAB
@@ -925,7 +1002,14 @@ static gint button_release_event(GtkWidget *widget, GdkEventButton *event)
         GLOBALS->in_button_press_wavewindow_c_1 = 0;
 
         DEBUG(printf("Button Release Event\n"));
-        button_motion_common(event->x, event->y, 1, 0);
+        if (GLOBALS->dragging_named_marker != NULL) {
+            gw_marker_set_position(GLOBALS->dragging_named_marker,
+                                   resolve_pixel_time(event->x, event->y));
+            GLOBALS->dragging_named_marker = NULL;
+            gtk_widget_queue_draw(GLOBALS->wavearea);
+        } else {
+            button_motion_common(event->x, event->y, 1, 0);
+        }
 
         /* warp selected signals if CTRL is pressed */
         if (event->button == 1) {

@@ -224,6 +224,24 @@ static const struct Global globals_base_values = {
     0, /* toppanedwindow_size_cache */
     0, /* panedwindow_size_cache */
     0, /* vpanedwindow_size_cache */
+    NULL, /* console_vpaned */
+    0, /* console_vpanedwindow_size_cache */
+    NULL, /* console_text_view */
+    NULL, /* console_mono_tag */
+    NULL, /* console_bold_tag */
+    {0}, /* console_iter */
+    TRUE, /* console_visible */
+    NULL, /* source_hpaned */
+    0, /* source_hpaned_size_cache */
+    NULL, /* source_panel_root */
+    NULL, /* source_text_view */
+    NULL, /* source_path_label */
+    NULL, /* source_highlight_tag */
+    NULL, /* source_last_path */
+    0, /* source_last_highlighted_line */
+    NULL, /* marker_panel_root */
+    NULL, /* marker_panel_rows */
+    FALSE, /* marker_panel_visible */
     NULL, /* sstpane 204 */
     NULL, /* expanderwindow 205 */
     0, /* disable_window_manager 206 */
@@ -279,6 +297,9 @@ static const struct Global globals_base_values = {
     NULL, /* buf_menu_c_1 253 128 */
     NULL, /* signal_popup_menu */
     NULL, /* sst_signal_popup_menu */
+    NULL, /* popup_menu_widget */
+    0.0, /* popup_menu_x */
+    0.0, /* popup_menu_y */
 
     /*
      * mouseover.c
@@ -587,6 +608,7 @@ static const struct Global globals_base_values = {
     0, /* left_justify_sigs 602 */
     0, /* zoom_pow10_snap 603 */
     0, /* cursor_snap 604 */
+    8, /* cursor_snap_last */
     -1.0, /* old_wvalue 605 */
     0, /* zoom 607 */
     1, /* scale */
@@ -607,6 +629,7 @@ static const struct Global globals_base_values = {
     NULL, /* hscroll_wavewindow_c_2 620 */
     NULL, /* wave_vslider2 622 */
     NULL, /* wave_hslider */
+    NULL, /* dragging_named_marker */
     -1, /* named_marker_lock_idx */
     0, /* which_t_color */
     0, /* fill_in_smaller_rgb_areas_wavewindow_c_1 659 */
@@ -1022,6 +1045,7 @@ void reload_into_new_context_2(void)
     new_globals->ps_maxveclen = GLOBALS->ps_maxveclen;
     new_globals->show_base = GLOBALS->show_base;
     new_globals->display_grid = GLOBALS->display_grid;
+    new_globals->console_visible = GLOBALS->console_visible;
     new_globals->fullscreen = GLOBALS->fullscreen;
     new_globals->show_toolbar = GLOBALS->show_toolbar;
     new_globals->time_box = GLOBALS->time_box;
@@ -1040,6 +1064,7 @@ void reload_into_new_context_2(void)
     new_globals->do_zoom_center = GLOBALS->do_zoom_center;
     new_globals->zoom_pow10_snap = GLOBALS->zoom_pow10_snap;
     new_globals->cursor_snap = GLOBALS->cursor_snap;
+    new_globals->cursor_snap_last = GLOBALS->cursor_snap_last;
     new_globals->hier_delimeter = GLOBALS->hier_delimeter;
     new_globals->hier_was_explicitly_set = GLOBALS->hier_was_explicitly_set;
     new_globals->page_divisor = GLOBALS->page_divisor;
@@ -1745,6 +1770,7 @@ static gint context_swapper(GtkWindow *w, GdkEvent *event, void *data)
                             GLOBALS->use_full_precision = g_old->use_full_precision;
                             GLOBALS->show_base = g_old->show_base;
                             GLOBALS->display_grid = g_old->display_grid;
+                            GLOBALS->console_visible = g_old->console_visible;
                             GLOBALS->fullscreen = g_old->fullscreen;
                             GLOBALS->show_toolbar = g_old->show_toolbar;
                             GLOBALS->time_box = g_old->time_box;
