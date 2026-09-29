@@ -222,6 +222,14 @@ endif
 config.set_quoted('PACKAGE_BUGREPORT', 'bybell@rocketmail.com')
 config.set_quoted('PACKAGE_VERSION', meson.project_version())
 
+# Best-effort native FSDB decoder script (see dump_file_main.c). Source-tree
+# path only for now -- doesn't yet survive `meson install` to a different
+# prefix; that's a follow-up, not a blocker for local/dev builds.
+config.set_quoted(
+    'GTKWAVE_FSDB_NATIVE_SCRIPT',
+    meson.project_source_root() / 'contrib' / 'fsdb_native' / 'fsdb_native_to_vcd.py',
+)
+
 configure_file(output: 'config.h', configuration: config)
 config_inc = include_directories('.')
 
