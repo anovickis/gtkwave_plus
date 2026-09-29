@@ -746,9 +746,21 @@ def decode_n2_vector_payload(payload):
         top_bits = (x >> len(array)) << len(array)
         return x, top_bits | _bits_to_int(array), width
 
-    separator = payload[-6 - width:-4 - width]
-    if separator != SEPARATOR:
-        raise IncompleteDecode("missing separator before final-value array")
+    # NOTE: the two bytes immediately before the final-value array (at
+    # payload[-6-width:-4-width]) are NOT a fixed \x00\x01 separator, despite
+    # looking like one in every file this reader was originally validated
+    # against. Cross-checked directly against ground-truth .vcd for every
+    # width=4 N=2 corpus file: those two bytes take other values (0x0002,
+    # 0x0005, 0xc100, 0x0601, 0xc200, 0xa200, ...) on plenty of real files
+    # whose tag/final-value decode is otherwise unambiguous and -- once
+    # decoded per the classifier-specific rules below -- byte-for-byte
+    # correct. So this reader no longer requires those two bytes to equal
+    # any particular value; the final-value array's *position* (the last
+    # `width` bytes before the trailer) does not depend on them, and
+    # `_bits_to_int` below already rejects anything that isn't a clean
+    # literal 0/1 bit array. What those two bytes actually encode remains
+    # unknown (see FINDINGS.md) but is evidently irrelevant to recovering
+    # the transition values themselves.
     final_array = payload[-4 - width:-4]
     if len(final_array) != width:
         raise IncompleteDecode("final-value array length mismatch")
@@ -876,10 +888,28 @@ def decode_vector_variable(data):
 
     try:
         x, final_value, width = decode_n2_vector_payload(payload)
-        delta = parse_delta_dictionary(data, dict_size=1)[0]
-        return width, [(0, 0), (delta, x), (delta + delta, final_value)]
     except IncompleteDecode:
         pass
+    else:
+        # The two inter-transition deltas (0->x and x->final) are only
+        # guaranteed EQUAL when the encoder's shared delta-time dictionary
+        # deduplicated them into a single size-1 entry -- which is what
+        # every N=2 vector file originally used to validate this decoder
+        # happened to do. When the two deltas genuinely differ, the encoder
+        # instead stores a size-2 dictionary (two independent byte values,
+        # in order); direct cross-check against every real N=2 vector's
+        # ground-truth .vcd in the corpus confirms these are the only two
+        # cases that occur, are mutually exclusive (exactly one of the two
+        # dictionary sizes is ever present), and each -- once present --
+        # always matches the true transition times exactly (0 mismatches,
+        # 0 unresolved across the whole corpus). See FINDINGS.md.
+        try:
+            delta = parse_delta_dictionary(data, dict_size=1)[0]
+            return width, [(0, 0), (delta, x), (delta + delta, final_value)]
+        except IncompleteDecode:
+            pass
+        delta1, delta2 = parse_delta_dictionary(data, dict_size=2)
+        return width, [(0, 0), (delta1, x), (delta1 + delta2, final_value)]
 
     # decode_n3_vector_payload also transparently covers the "N=4 but the
     # 4th transition collapsed into the 3rd" case from the research code
