@@ -289,8 +289,13 @@ static void update_hadjustment(GwSignalList *signal_list)
 static gboolean draw(GtkWidget *widget, cairo_t *cr)
 {
     GwSignalListColors *colors = gw_color_theme_get_signal_list_colors(GLOBALS->color_theme);
+    gboolean free_colors = FALSE;
     if (GLOBALS->black_and_white) {
         colors = gw_signal_list_colors_new_black_and_white();
+        free_colors = TRUE;
+    } else if (GLOBALS->use_dark) {
+        colors = gw_signal_list_colors_new_dark();
+        free_colors = TRUE;
     }
 
     gint page_num = gtk_notebook_get_current_page(GTK_NOTEBOOK(GLOBALS->notebook));
@@ -317,7 +322,7 @@ static gboolean draw(GtkWidget *widget, cairo_t *cr)
     gtk_widget_get_allocation(widget, &allocation);
 
     // Draw the header
-    if (!GLOBALS->use_dark) {
+    {
         cairo_set_source_rgba(cr,
                               colors->mdgray.r,
                               colors->mdgray.g,
@@ -363,7 +368,7 @@ static gboolean draw(GtkWidget *widget, cairo_t *cr)
 
     set_GLOBALS(g_old);
 
-    if (GLOBALS->black_and_white) {
+    if (free_colors) {
         g_free(colors);
     }
 

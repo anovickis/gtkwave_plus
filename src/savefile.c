@@ -11,6 +11,7 @@
 #include <config.h>
 #include "savefile.h"
 #include "lx2.h"
+#include "source_panel.h"
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
@@ -233,6 +234,16 @@ void write_save_helper(const char *savnam, FILE *wave)
             fprintf(wave,
                     "[sst_vpaned_height] %d\n",
                     gtk_paned_get_position(GTK_PANED(GLOBALS->sst_vpaned)));
+        }
+        if (GLOBALS->console_vpaned) {
+            fprintf(wave,
+                    "[console_height] %d\n",
+                    gtk_paned_get_position(GTK_PANED(GLOBALS->console_vpaned)));
+        }
+        if (GLOBALS->source_hpaned) {
+            fprintf(wave,
+                    "[source_width] %d\n",
+                    gtk_paned_get_position(GTK_PANED(GLOBALS->source_hpaned)));
         }
     }
 
@@ -1424,6 +1435,33 @@ int parsewavline(char *w, char *alias, int depth)
                         gtk_paned_set_position(GTK_PANED(GLOBALS->sst_vpaned), x);
                     } else {
                         GLOBALS->vpanedwindow_size_cache = x;
+                    }
+                }
+            }
+        } else if (strcmp(w2, "console_height") == 0) {
+            if (!GLOBALS->ignore_savefile_pane_pos) {
+                /* notebook vs console panel position.  */
+                int x;
+                sscanf(w, "%d", &x);
+                if (!GLOBALS->block_xy_update) {
+                    if (GLOBALS->console_vpaned) {
+                        gtk_paned_set_position(GTK_PANED(GLOBALS->console_vpaned), x);
+                    } else {
+                        GLOBALS->console_vpanedwindow_size_cache = x;
+                    }
+                }
+            }
+        } else if (strcmp(w2, "source_width") == 0) {
+            if (!GLOBALS->ignore_savefile_pane_pos) {
+                /* waves vs source panel position.  */
+                int x;
+                sscanf(w, "%d", &x);
+                if (!GLOBALS->block_xy_update) {
+                    if (GLOBALS->source_hpaned) {
+                        gtk_paned_set_position(GTK_PANED(GLOBALS->source_hpaned), x);
+                        source_panel_set_visible(TRUE);
+                    } else {
+                        GLOBALS->source_hpaned_size_cache = x;
                     }
                 }
             }

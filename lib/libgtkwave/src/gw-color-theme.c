@@ -391,3 +391,28 @@ GwSignalListColors *gw_signal_list_colors_new_black_and_white(void)
 
     return self;
 }
+
+// Dark palette for the signal name/value pane, matching the waveform
+// canvas's black background (see gw_waveform_colors_init above) so the two
+// panes read as one continuous dark surface instead of a light strip next
+// to a dark one.
+GwSignalListColors *gw_signal_list_colors_new_dark(void)
+{
+    GwSignalListColors *self = g_new0(GwSignalListColors, 1);
+
+    /* roles reused as background/foreground pair, same convention as the
+     * black-and-white variant above (->white = canvas bg, ->black = default
+     * foreground text/lines) */
+    gw_color_init_from_hex(&self->white, "121212"); /* canvas background */
+    gw_color_init_from_hex(&self->black, "e8e8e8"); /* default text/lines */
+    gw_color_init_from_hex(&self->ltgray, "1c1c1c"); /* unselected row background */
+    gw_color_init_from_hex(&self->normal, "1a1a1a");
+    gw_color_init_from_hex(&self->mdgray, "262626"); /* header background */
+    gw_color_init_from_hex(&self->dkgray, "3a3a3a");
+    gw_color_init_from_hex(&self->dkblue, "3a5fa8"); /* selected signal row background */
+    gw_color_init_from_hex(&self->brkred, "cc4444"); /* comment */
+    gw_color_init_from_hex(&self->ltblue, "5dbebb"); /* shadowed selected row background */
+    gw_color_init_from_hex(&self->gmstrd, "b5ab1c"); /* group */
+
+    return self;
+}

@@ -13,6 +13,7 @@
 #include "symbol.h"
 #include "lx2.h"
 #include "gw-ghw-file.h"
+#include "console_panel.h"
 
 void status_text(const char *str)
 {
@@ -23,6 +24,17 @@ void status_text(const char *str)
 
     int len = strlen(str);
     char ch = len ? str[len - 1] : 0;
+    const char *newline = (ch == '\n') ? "" : "\n";
 
-    fprintf(stderr, "GTKWAVE | %s%s", str, (ch == '\n') ? "" : "\n");
+    /* stderr stays unconditional so headless/batch/scripted use is
+     * unaffected; the console panel is purely additive and may not exist
+     * yet (or at all, in batch mode). */
+    fprintf(stderr, "GTKWAVE | %s%s", str, newline);
+
+    if (GLOBALS->console_text_view != NULL) {
+        console_panel_append(str);
+        if (*newline) {
+            console_panel_append(newline);
+        }
+    }
 }

@@ -74,5 +74,6 @@ GwWaveformColors *gw_waveform_colors_get_rainbow_variant(GwWaveformColors *self,
                                                          gboolean keep_xz);
 GwWaveformColors *gw_waveform_colors_new_black_and_white(void);
 GwSignalListColors *gw_signal_list_colors_new_black_and_white(void);
+GwSignalListColors *gw_signal_list_colors_new_dark(void);
 
 G_END_DECLS

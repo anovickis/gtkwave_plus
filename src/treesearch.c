@@ -1343,6 +1343,8 @@ GtkWidget *treeboxframe(const char *title)
     gtk_widget_show(filter_hbox);
 
     GLOBALS->filter_entry = gtk_search_entry_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(GLOBALS->filter_entry),
+                                "sst-filter-entry");
     if (GLOBALS->filter_str_treesearch_gtk2_c_1) {
         gtk_entry_set_text(GTK_ENTRY(GLOBALS->filter_entry),
                            GLOBALS->filter_str_treesearch_gtk2_c_1);

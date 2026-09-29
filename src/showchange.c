@@ -291,9 +291,14 @@ void showchange(const char *title, GwTrace *t, GCallback func)
             new_flags = (new_flags & ~TR_NUMMASK) | base;
         }
 
-        int64_t color;
-        if (combo_box_get_active_value(color_combo_box, &color)) {
-            new_color = color;
+        /* t->t_color is the 1-based row index into COLORS[] (0 = Normal), not
+         * the GwRainbowColor value stored in COLUMN_VALUE -- see the
+         * gw-wave-view-traces.c consumer, which does `t_color - 1` to get
+         * the GwRainbowColor. Use the row index directly so it round-trips
+         * with the preselection logic above. */
+        gint active_index = gtk_combo_box_get_active(GTK_COMBO_BOX(color_combo_box));
+        if (active_index >= 0) {
+            new_color = (unsigned int)active_index;
         }
 
         uint64_t analog_format;

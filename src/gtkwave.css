@@ -33,3 +33,27 @@ GwMouseover .name {
 GwMouseover .flags {
 	font-style: italic;
 }
+
+/* Verdi-style polish for the parts the system theme's dark variant doesn't
+ * already cover on its own: pane-drag handles and the always-visible SST
+ * filter bar. Scoped to .dark-mode (set on the main window only when
+ * --dark/-6 is active) so light-theme users see no change. */
+
+.dark-mode paned > separator {
+	background-color: #333333;
+	background-image: none;
+	min-width: 3px;
+	min-height: 3px;
+}
+
+.dark-mode paned > separator:hover {
+	background-color: #4fa9a6;
+}
+
+.dark-mode .sst-filter-entry {
+	border-color: #4fa9a6;
+}
+
+.dark-mode .sst-filter-entry:focus {
+	box-shadow: inset 0 0 0 1px #4fa9a6;
+}
