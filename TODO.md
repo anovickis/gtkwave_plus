@@ -19,6 +19,14 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   continuous-high span, over the primary<->baseline marker span.
 - **Live value annotation in the source cross-probe panel** when the
   cursor moves, for signals already displayed in the waveform.
+- **Gate-level schematic (SVG), via Yosys.** A second, distinct schematic
+  view -- real synthesized AND/XOR/NOT/DFF cells instead of the RTL-level
+  Assignment/Conditional dataflow graph the first one shows. No live value
+  annotation (Yosys's post-techmap names don't map back to RTL signals).
+  Known gap: requires the configured top module to be synthesizable RTL --
+  a plain testbench top with an unguarded `$finish` in an `initial` block
+  will fail to elaborate; auto-detecting the real DUT under a testbench
+  wrapper isn't implemented.
 
 ## Up next, in order
 
