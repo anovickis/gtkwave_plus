@@ -12,6 +12,7 @@
 #include "savefile.h"
 #include "lx2.h"
 #include "source_panel.h"
+#include "time_compress.h"
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
@@ -208,6 +209,15 @@ void write_save_helper(const char *savnam, FILE *wave)
                 "[ruler] %" GW_TIME_FORMAT " %" GW_TIME_FORMAT "\n",
                 GLOBALS->ruler_origin,
                 GLOBALS->ruler_step);
+    }
+
+    for (guint i = 0; i < time_compress_span_count(); i++) {
+        GwTime span_start, span_end;
+        time_compress_span_get(i, &span_start, &span_end);
+        fprintf(wave,
+                "[compressed_span] %" GW_TIME_FORMAT " %" GW_TIME_FORMAT "\n",
+                span_start,
+                span_end);
     }
 
     if (GLOBALS->open_tree_nodes) {
@@ -787,6 +797,9 @@ int read_save_helper(char *wname,
         GLOBALS->default_fpshift = 0;
         GLOBALS->shift_timebase_default_for_add = GW_TIME_CONSTANT(0);
         GLOBALS->strace_current_window = 0; /* in case there are shadow traces */
+        time_compress_clear(); /* stale spans from before this load shouldn't linger --
+                                  real ones (if any) are re-added below via
+                                  [compressed_span] lines as this file is parsed */
 
         rc = 0;
         GLOBALS->which_t_color = 0;
@@ -1493,6 +1506,10 @@ int parsewavline(char *w, char *alias, int depth)
                    "%" GW_TIME_FORMAT " %" GW_TIME_FORMAT,
                    &GLOBALS->ruler_origin,
                    &GLOBALS->ruler_step);
+        } else if (strcmp(w2, "compressed_span") == 0) {
+            GwTime span_start = GW_TIME_CONSTANT(0), span_end = GW_TIME_CONSTANT(0);
+            sscanf(w, "%" GW_TIME_FORMAT " %" GW_TIME_FORMAT, &span_start, &span_end);
+            time_compress_add_span(span_start, span_end);
         } else if (strcmp(w2, "timestart") == 0) {
             sscanf(w, "%" GW_TIME_FORMAT, &GLOBALS->timestart_from_savefile);
             GLOBALS->timestart_from_savefile_valid = 2;
