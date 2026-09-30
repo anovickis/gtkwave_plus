@@ -91,40 +91,54 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   initial version that skipped every `extvals` node entirely (assuming
   it meant real/string-only), which silently dropped ordinary
   natively-declared multi-bit signals, the common case.
+- **Recolor schematic net edges by logic value + step to next/prev
+  transition.** `recolor_dot_edges()` colors each labeled net edge by its
+  value at the annotated time (red=X-like, dark orange=Z, forestgreen=
+  actively driven-high, default=clean zero or unresolvable), same "X-
+  like"/"driven-high" definition `strace.c`'s `ST_X`/`ST_HIGH` and List X
+  already use. "Prev Transition"/"Next Transition" toolbar buttons move
+  the marker to the root signal's previous/next real transition without
+  leaving the schematic (`signal_step_transition_time()`, alongside the
+  existing `signal_value_at_time()`) -- the existing marker-changed
+  handler already re-renders on that. Verified via a standalone GLib-only
+  test harness (fake lookup, matching the code's own designed-for-that
+  structure) against a real slang-netlist DOT sample, then fed the
+  recolored output through the real `dot` binary and visually confirmed
+  the render. Didn't end up using the gdb-forced-call harness this time --
+  a forced GUI call was slow enough that gdb's own output buffering (into
+  a redirected log file) made it look hung when it wasn't; the standalone
+  harness was more direct anyway for logic explicitly designed to be
+  lookup-injectable.
 
 ## Up next, in order
 
-1. **Recolor schematic net lines by logic value** (not just the label
-   text) + toolbar buttons to step the annotated time to the next/previous
-   transition without leaving the schematic. Natural polish pass now that
-   clicking lands, and reuses the live-annotation plumbing already built.
-
-2. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
+1. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
    expand-as-sub-bus). Supersedes the plain "no bit-slicing" gap --
    worth doing this instead of a narrower slicing-only feature.
 
-3. **Compress Time Range**: collapse uninteresting time spans to a "+"
+2. **Compress Time Range**: collapse uninteresting time spans to a "+"
    marker. Self-contained, no dependency on anything above.
 
-4. **Group Manager**: a real dialog for nested signal groups, bulk
+3. **Group Manager**: a real dialog for nested signal groups, bulk
    "move to group".
 
-5. **Highlight incomplete/unresolved nets** (dashed line) in the
+4. **Highlight incomplete/unresolved nets** (dashed line) in the
    schematic -- the clickable schematic's per-node metadata already exists
    to hang this off of; low effort at this point.
 
-6. **Struct/union display** (expandable field tree) and **derived/virtual
+5. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-7. **Editable/exportable schematic mode** (reposition instances,
+6. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
-   opportunistically alongside #1 rather than as standalone efforts.
+   opportunistically alongside other schematic work rather than as a
+   standalone effort.
 
-8. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+7. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
    but the highest-effort item here (needs a real sub-timestamp data
    model, not just a UI); lowest priority-to-effort ratio on this list.
 
