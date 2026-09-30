@@ -416,6 +416,21 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   other file via the real `gtk_combo_box_set_active_id()` call (firing
   the real "changed" signal end-to-end) and confirmed both the path
   label and the actual loaded buffer content reflect the switch.
+- **Analog Waveform view: exposed it in the quick signal popover.**
+  Research found the TODO's premise ("currently absent") was outdated --
+  the analog rendering engine, `TR_ANALOG_*` flags, and full menu/dialog
+  UI already existed and predate this fork; it works on any trace, not
+  just real-typed ones. The one real gap: `signal_popover.c` (the newer
+  GTK3 popover this session has been extending all along) had no Analog
+  entries at all, unlike its already-covered Hex/Dec/Signed/Bin/Oct/
+  ASCII row. New "Analog" row (Off/Step/Interp/Interp+/Screen/All Data)
+  calling the exact same `menu_dataformat_analog_*()` backend the
+  classic popup menu already uses -- reused the existing
+  `RadixEntry`/`make_radix_button`/`on_action_button_clicked` machinery
+  unchanged. Verified via gdb: opened the real popover, walked its live
+  widget tree to the real Analog buttons, clicked the real "Step" button
+  via `gtk_button_clicked()` and confirmed the trace's flags gained
+  exactly `TR_ANALOG_STEP`, clicked "Off" and confirmed it cleared back.
 
 ## Up next, in order
 
@@ -440,19 +455,48 @@ the conversation history for the full reasoning behind this ordering.
 
 4. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
-    real nWave feature.
+    real nWave feature. Investigated this session: no existing "re-scan
+    the currently-open dump file for appended data" capability at all
+    (confirmed no stub, no timer, no half-built path). VCD's parser
+    (`lib/libgtkwave/src/gw-vcd-loader.c`) closes its file handle and
+    discards its VCD-id-to-node symbol table after the initial load, and
+    each node's history is a frozen/immutable `GwVlist` after that --
+    genuinely not resumable as built. FST is more favorable (its reader
+    context stays alive for the dump file's lifetime and its block-table
+    design is naturally growable) but still needs a "resume block scan
+    from last position" variant. Real implementation needs new
+    "append more history to an already-imported node" APIs in
+    `GwVcdFile`/`GwFstFile`, a `GwTimeRange` mutability/replacement path,
+    and a new id-remapping/resumable-parser-state object for VCD --
+    roughly 6-10 files in `lib/libgtkwave` plus a new driver in `src/`.
+    Medium-to-large, not a bounded single-session task; deferred rather
+    than rushed, same reasoning as Waveform Compare.
 
 5. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
 6. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
-    scale feature for struct-heavy designs.
+    scale feature for struct-heavy designs. Investigated this session:
+    SystemVerilog struct/union signals aren't a distinct `GwVarType`
+    today -- they're flattened into ordinary wide-bitvector nodes and
+    drawn through the same `draw_hptr_trace_vector()`/`draw_vptr_trace()`
+    path as any other bus (`gw-wave-view-traces.c`), which already skips
+    drawing a text value (falls back to a plain colored block) once a
+    segment's pixel width drops below `GLOBALS->vector_padding` -- so the
+    "too narrow, simplify" precedent already exists, just not tuned as a
+    distinct "dense" mode. The TODO's actual ask is *performance* for
+    struct-heavy designs, though, and the current loop still issues one
+    draw call per history entry regardless of width; a real fix needs
+    pre-aggregating sub-pixel-width consecutive segments into batched
+    draws before the draw loop runs, inside a large (~300-line),
+    performance-critical, universally-used rendering function every bus
+    trace in every session goes through. Deferred as too high-risk for a
+    single self-contained patch to a hot path this central; a narrower,
+    purely-cosmetic threshold tweak was considered and rejected since it
+    wouldn't deliver the performance win the item actually asks for.
 
-7. **Analog Waveform view** -- expected baseline EDA-viewer feature,
-    currently absent.
-
-8. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+7. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
