@@ -27,17 +27,20 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   a plain testbench top with an unguarded `$finish` in an `initial` block
   will fail to elaborate; auto-detecting the real DUT under a testbench
   wrapper isn't implemented.
+- **Depth/module-boundary-limited tracing on the fan-in/fan-out queries.**
+  `GwNetlistQueryLimits{max_depth, module_boundary_only}`, applied
+  client-side (no slang-netlist changes) and surfaced as a Max depth
+  spinner + "Stop at module boundary" checkbox + Refresh button in the
+  Show Loads / Show Cone of Logic results windows, defaulting to
+  unlimited so existing behavior is unchanged unless a user opts in.
+  Bit-range limiting was *not* added here -- it turned out `--drivers
+  name[bit-range]` already works untouched by just passing a bit-range-
+  suffixed signal_path straight through (no code change needed); Show
+  Drivers' UI doesn't expose that yet, but the backend already supports it.
 
 ## Up next, in order
 
-1. **Depth/bit-range-limited tracing on the fan-in/fan-out/driver/load
-   queries**, plus a "stop at module boundary" option. Goes first because
-   it's the scalability guard rail everything schematic-related already
-   depends on -- an unbounded cone on a real (not toy) design gets
-   unwieldy fast, and it's cheap: filter GwNetlistQuery's existing flat
-   result list by hierarchy depth, no slang-netlist changes needed.
-
-2. **Make the schematic actually clickable**, using node bounding boxes
+1. **Make the schematic actually clickable**, using node bounding boxes
    from Graphviz's own `-Txdot`/`-Tplain` output instead of a flat PNG.
    This is the real foundation the whole "static image" complaint traces
    back to, and it's a smaller lift than it looks -- Graphviz already
@@ -50,48 +53,48 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
    - Collapse/expand a module to a black box
    - Add to Waveform / drag a schematic signal into the wave pane
 
-3. **Search UX rework**: exact/wildcard bus-value search, a "stable for
+2. **Search UX rework**: exact/wildcard bus-value search, a "stable for
    >= N time units" constraint, jump to the Nth occurrence. This was the
    original "search is hard to use" complaint from day one and has zero
    dependency on the netlist/schematic work, so it can happen in parallel
-   with #1/#2 whenever there's a natural break.
+   with #1 whenever there's a natural break.
 
-4. **List X / Trace X**: scan the loaded waveform for X (unknown) regions,
+3. **List X / Trace X**: scan the loaded waveform for X (unknown) regions,
    list them, then trace backward from a specific occurrence to its
    root-cause driver. High ROI -- reuses the existing driver-query backend
    as-is, just a different entry point (seeded from a bad value instead of
    a signal name).
 
-5. **Recolor schematic net lines by logic value** (not just the label
+4. **Recolor schematic net lines by logic value** (not just the label
    text) + toolbar buttons to step the annotated time to the next/previous
-   transition without leaving the schematic. Natural polish pass once #2
+   transition without leaving the schematic. Natural polish pass once #1
    lands, and reuses the live-annotation plumbing already built.
 
-6. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
+5. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
    expand-as-sub-bus). Supersedes the plain "no bit-slicing" gap --
    worth doing this instead of a narrower slicing-only feature.
 
-7. **Compress Time Range**: collapse uninteresting time spans to a "+"
+6. **Compress Time Range**: collapse uninteresting time spans to a "+"
    marker. Self-contained, no dependency on anything above.
 
-8. **Group Manager**: a real dialog for nested signal groups, bulk
+7. **Group Manager**: a real dialog for nested signal groups, bulk
    "move to group".
 
-9. **Highlight incomplete/unresolved nets** (dashed line) in the
-   schematic -- worth doing once #2's node metadata exists to hang it off
+8. **Highlight incomplete/unresolved nets** (dashed line) in the
+   schematic -- worth doing once #1's node metadata exists to hang it off
    of; low effort at that point.
 
-10. **Struct/union display** (expandable field tree) and **derived/virtual
-    signal expressions**. Bigger standalone features, no urgent driver
-    from anything else on this list -- pick up when there's a specific
-    need.
+9. **Struct/union display** (expandable field tree) and **derived/virtual
+   signal expressions**. Bigger standalone features, no urgent driver
+   from anything else on this list -- pick up when there's a specific
+   need.
 
-11. **Editable/exportable schematic mode** (reposition instances,
+10. **Editable/exportable schematic mode** (reposition instances,
     print/capture), **configurable color themes**, **zoom/pan + a
     navigation-only "last view" undo**. Polish tier -- do opportunistically
-    alongside #2/#5 rather than as standalone efforts.
+    alongside #1/#4 rather than as standalone efforts.
 
-12. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+11. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but the highest-effort item here (needs a real sub-timestamp data
     model, not just a UI); lowest priority-to-effort ratio on this list.
 
