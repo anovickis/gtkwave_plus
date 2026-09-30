@@ -222,6 +222,22 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   a real Drivers query succeeds with it applied (window titled
   "Drivers of tb.dut.u_counter.count_q[2:1]"), confirmed an empty range
   still queries the whole signal as before.
+- **Fix schematic popup windows: center content, add Zoom In/Out/Fit/1:1.**
+  User-reported: both schematic popups (RTL fan-in cone and gate-level)
+  rendered the diagram tiny and stuck in the top-left corner, with no
+  zoom control -- a plain GtkImage-in-GtkScrolledWindow with a fixed
+  default window size unrelated to the image's natural size. Centered
+  the image on both axes, and added a real Zoom In/Out/Fit/1:1 toolbar
+  (rescales a retained original pixbuf, auto-fits once via a one-shot
+  `size-allocate` handler, later refreshes preserve the user's chosen
+  zoom). `schematic_view.c`'s click-to-node hit-testing now divides
+  click coordinates by the current zoom before testing against node
+  bounding boxes (always stored in 1.0-zoom space). Verified via gdb:
+  confirmed zoom_to_fit() computes a real non-1.0 scale and produces a
+  correctly-sized displayed pixbuf, and confirmed the click-coordinate
+  fix is both correct and necessary -- a synthetic click at a known
+  node's *scaled* position resolves correctly; the same node's
+  *unscaled* 1.0-zoom coordinates correctly miss.
 
 ## Up next, in order
 
