@@ -386,6 +386,21 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   exact inverses again, confirmed a full solve-then-verify round trip
   holds exactly for both a zoom-in (anchor landing inside a compressed
   marker) and a zoom-out (anchor before the span) scenario.
+- **Compress Time Range: made page/scroll-increment math
+  compression-aware.** The other documented gap: every "how much time is
+  one page/scroll-step" computation (21 call sites across 13 files) used
+  the plain `wavewidth * nspx` bulk approximation directly, undercounting
+  whenever a compressed span fell within that pixel width -- most
+  visibly, this was the actual Page Up/Down and scrollbar-trough-click
+  increment (`zoombuttons.c`'s `fix_wavehadj()`). New
+  `gw_time_page_increment()`: the real duration `wavewidth` pixels
+  represents via `gw_pixel_to_time(wavewidth) - tims.start`, falling
+  back to the exact plain formula when nothing's compressed. Mechanically
+  replaced all 21 occurrences. Verified via gdb: confirmed no regression
+  when nothing's compressed, confirmed a real compressed span made the
+  new function return a larger, hand-verified value than the old
+  formula, confirmed the real `GtkAdjustment`'s `page_increment`
+  property reflects the fix.
 
 ## Up next, in order
 
@@ -425,11 +440,7 @@ the conversation history for the full reasoning behind this ordering.
 8. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-9. **Compress Time Range: compression-aware page/scroll-increment
-    math.** Precision polish (paging jumps a slightly wrong amount
-    across a compressed span); low urgency.
-
-10. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+9. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
