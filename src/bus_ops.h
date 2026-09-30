@@ -20,3 +20,10 @@ void bus_ops_show_expand_subbus_dialog(GwTrace *t);
 // Toggles TR_REVERSE on `t` (a vector/bus trace) and redraws. No-ops with
 // a status message if `t` isn't a vector/bus trace.
 void bus_ops_reverse_bit_order(GwTrace *t);
+
+// Opens a dialog to reorder, remove, and add constituent bits of an
+// existing bus, then build a new bus trace with that composition (the
+// original bus is left untouched -- same non-destructive precedent as
+// Expand-as-Sub-Bus above). No-ops with a status message if `t` isn't a
+// bus (multi-bit) signal.
+void bus_ops_show_edit_composition_dialog(GwTrace *t);
