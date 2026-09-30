@@ -65,49 +65,66 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   first, then each new piece) since driving the actual GTK comboboxes
   isn't practical headless.
   Known gap found along the way, not fixed (pre-existing, unrelated to
-  this change): WCP's `add_items` fails to resolve a multi-bit vector
+  this change): WCP's `add_items` failed to resolve a multi-bit vector
   signal path (e.g. `tb.value`) even though the identical scalar-signal
-  form works fine -- left as a future bug to chase.
+  form worked fine. Root-caused later (see List X below): it needs
+  gtkwave's own internal bit-range-suffixed name with no space before the
+  bracket (`tb.value[3:0]`, not `tb.value` or `tb.value [3:0]`) --
+  a real usability gap (this internal naming isn't discoverable from the
+  VCD's own declared name), not a crash; still not fixed, since
+  `add_items`'s contract for what a caller should pass is a product
+  decision, not obviously mine to make unilaterally.
+- **List X.** Search > List X...: scans every currently-displayed,
+  non-blank trace's full history for unknown/X-like values (same
+  definition `strace.c`'s `ST_X` search type uses), lists each contiguous
+  bad-value interval with a "Go To" (jump marker + viewport) and "Trace
+  Drivers" (seeds the existing `netlist_query_show_drivers()` backend
+  from the bad signal, disabled with a tooltip when no full hierarchical
+  path is resolvable). Covers both a real constructed/auto-coalesced
+  vector (`GwBitVector`) and, more commonly, a natively-declared
+  multi-bit VCD var (a `GwNode` with `extvals` set) -- these are NOT the
+  same representation despite both being "multi-bit," so both needed
+  their own scan path. Verified via gdb against a synthetic VCD fixture
+  with known X regions; caught and fixed two real bugs in the process
+  (see the commit) -- a missing lower time-bound that matched gtkwave's
+  synthetic pre-dump-zero sentinel entries as false positives, and an
+  initial version that skipped every `extvals` node entirely (assuming
+  it meant real/string-only), which silently dropped ordinary
+  natively-declared multi-bit signals, the common case.
 
 ## Up next, in order
 
-1. **List X / Trace X**: scan the loaded waveform for X (unknown) regions,
-   list them, then trace backward from a specific occurrence to its
-   root-cause driver. High ROI -- reuses the existing driver-query backend
-   as-is, just a different entry point (seeded from a bad value instead of
-   a signal name).
-
-2. **Recolor schematic net lines by logic value** (not just the label
+1. **Recolor schematic net lines by logic value** (not just the label
    text) + toolbar buttons to step the annotated time to the next/previous
    transition without leaving the schematic. Natural polish pass now that
    clicking lands, and reuses the live-annotation plumbing already built.
 
-3. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
+2. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
    expand-as-sub-bus). Supersedes the plain "no bit-slicing" gap --
    worth doing this instead of a narrower slicing-only feature.
 
-4. **Compress Time Range**: collapse uninteresting time spans to a "+"
+3. **Compress Time Range**: collapse uninteresting time spans to a "+"
    marker. Self-contained, no dependency on anything above.
 
-5. **Group Manager**: a real dialog for nested signal groups, bulk
+4. **Group Manager**: a real dialog for nested signal groups, bulk
    "move to group".
 
-6. **Highlight incomplete/unresolved nets** (dashed line) in the
+5. **Highlight incomplete/unresolved nets** (dashed line) in the
    schematic -- the clickable schematic's per-node metadata already exists
    to hang this off of; low effort at this point.
 
-7. **Struct/union display** (expandable field tree) and **derived/virtual
+6. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-8. **Editable/exportable schematic mode** (reposition instances,
+7. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
-   opportunistically alongside #2 rather than as standalone efforts.
+   opportunistically alongside #1 rather than as standalone efforts.
 
-9. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+8. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
    but the highest-effort item here (needs a real sub-timestamp data
    model, not just a UI); lowest priority-to-effort ratio on this list.
 
