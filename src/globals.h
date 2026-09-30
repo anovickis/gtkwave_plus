@@ -271,6 +271,8 @@ struct Global
     GtkWidget *marker_panel_root; /* top-level widget shown/hidden as a unit, from marker_panel.c */
     GPtrArray *marker_panel_rows; /* one GwMarkerPanelRow* per named marker, from marker_panel.c */
     gboolean marker_panel_visible;
+    GPtrArray *netlist_source_files; /* owned gchar*, from netlist_query_ui.c; NULL until configured */
+    char *netlist_top_module; /* from netlist_query_ui.c; NULL until configured */
     GtkWidget *sstpane; /* from main.c 215 */
     GtkWidget *expanderwindow; /* from main.c 216 */
     char disable_window_manager; /* from main.c 217 */

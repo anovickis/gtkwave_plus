@@ -9,6 +9,8 @@
 #include "globals.h"
 #include "gw-color.h"
 #include "menu.h"
+#include "netlist_query_ui.h"
+#include "status.h"
 
 typedef void (*MenuAction)(gpointer, guint, GtkWidget *);
 
@@ -96,6 +98,59 @@ static GtkWidget *make_radix_button(const RadixEntry *entry)
     return button;
 }
 
+// Driver/load queries act on exactly one signal; picks the first
+// highlighted, named trace (the same highlight set the color/radix actions
+// above act on in bulk), since a fan-in/fan-out query only makes sense for
+// a single target.
+static GwTrace *find_target_trace(void)
+{
+    GwTrace *t = GLOBALS->traces.first;
+    while (t != NULL) {
+        if ((t->flags & TR_HIGHLIGHT) && !(t->flags & (TR_BLANK | TR_ANALOG_BLANK_STRETCH)) &&
+           t->name_full != NULL) {
+            return t;
+        }
+        t = t->t_next;
+    }
+    return NULL;
+}
+
+static void close_ancestor_popover(GtkWidget *widget)
+{
+    GtkWidget *popover = gtk_widget_get_ancestor(widget, GTK_TYPE_POPOVER);
+    if (popover != NULL) {
+        gtk_popover_popdown(GTK_POPOVER(popover));
+    }
+}
+
+static void on_show_drivers_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    close_ancestor_popover(GTK_WIDGET(button));
+
+    if (t == NULL) {
+        status_text("GTKWAVE | Select a signal first to show its drivers.\n");
+        return;
+    }
+    netlist_query_show_drivers(t->name_full);
+}
+
+static void on_show_loads_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    close_ancestor_popover(GTK_WIDGET(button));
+
+    if (t == NULL) {
+        status_text("GTKWAVE | Select a signal first to show its loads.\n");
+        return;
+    }
+    netlist_query_show_loads(t->name_full);
+}
+
 static void add_section_label(GtkWidget *box, const char *text)
 {
     gchar *markup = g_markup_printf_escaped("<b>%s</b>", text);
@@ -151,6 +206,20 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
                      G_CALLBACK(on_action_button_clicked),
                      (gpointer)(MenuAction)menu_showchangeall);
     gtk_box_pack_start(GTK_BOX(box), props_button, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
+
+    GtkWidget *netlist_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+
+    GtkWidget *drivers_button = gtk_button_new_with_label("Show Drivers");
+    g_signal_connect(drivers_button, "clicked", G_CALLBACK(on_show_drivers_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(netlist_box), drivers_button, TRUE, TRUE, 0);
+
+    GtkWidget *loads_button = gtk_button_new_with_label("Show Loads");
+    g_signal_connect(loads_button, "clicked", G_CALLBACK(on_show_loads_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(netlist_box), loads_button, TRUE, TRUE, 0);
+
+    gtk_box_pack_start(GTK_BOX(box), netlist_box, FALSE, FALSE, 0);
 
     gtk_container_add(GTK_CONTAINER(popover), box);
     gtk_widget_show_all(box);

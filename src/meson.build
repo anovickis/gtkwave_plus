@@ -40,6 +40,7 @@ gtkwave_sources = [
     'markerbox.c',
     'menu.c',
     'mouseover.c',
+    'netlist_query_ui.c',
     'pagebuttons.c',
     'pipeio.c',
     'pixmaps.c',

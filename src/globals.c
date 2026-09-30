@@ -242,6 +242,8 @@ static const struct Global globals_base_values = {
     NULL, /* marker_panel_root */
     NULL, /* marker_panel_rows */
     FALSE, /* marker_panel_visible */
+    NULL, /* netlist_source_files */
+    NULL, /* netlist_top_module */
     NULL, /* sstpane 204 */
     NULL, /* expanderwindow 205 */
     0, /* disable_window_manager 206 */
