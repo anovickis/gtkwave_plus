@@ -106,8 +106,12 @@ GwHistEnt *bsearch_node(GwNode *n, GwTime key)
 
     if ((!GLOBALS->max_compare_pos_bsearch_c_1) ||
         (GLOBALS->max_compare_time_bsearch_c_1 < GW_TIME_CONSTANT(0))) {
-        GLOBALS->max_compare_pos_bsearch_c_1 = n->harray[1]; /* aix bsearch fix */
-        GLOBALS->max_compare_index = &(n->harray[1]);
+        /* aix bsearch fix -- harray[1] is the intended fallback, but a node
+         * with only a single history entry (e.g. one that never transitions)
+         * has no index 1; fall back to the last valid index instead. */
+        int fallback_idx = (n->numhist > 1) ? 1 : 0;
+        GLOBALS->max_compare_pos_bsearch_c_1 = n->harray[fallback_idx];
+        GLOBALS->max_compare_index = &(n->harray[fallback_idx]);
     }
 
     while (GLOBALS->max_compare_pos_bsearch_c_1->next) /* non-RoSync dumper deglitching fix */
