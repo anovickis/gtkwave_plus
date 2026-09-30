@@ -238,6 +238,23 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   fix is both correct and necessary -- a synthetic click at a known
   node's *scaled* position resolves correctly; the same node's
   *unscaled* 1.0-zoom coordinates correctly miss.
+- **List X: scan the whole design hierarchy**, not just currently-
+  displayed traces. Previously you had to already suspect *and display*
+  a signal before List X could find an X in it, defeating the feature's
+  actual point. Now also walks `GwFacs` (the flat symbol table for the
+  whole loaded dump, same unconditional-scan pattern `tcl_helper.c`/
+  `treesearch.c` already use), building a throwaway `GwTrace` per symbol
+  to reuse the existing scan logic, deduped by `GwNode*` for VCD
+  identifier-code aliasing. Along the way, hit and fixed a real gap: a
+  node that's never been displayed keeps its history compressed
+  (`mv.mvlfac` set, no `head`/`next` chain yet) until `import_trace()`
+  unpacks it -- previously only done by `AddNodeTraceReturn()` the first
+  time a node became a visible trace. Auto-coalesced constructed vectors
+  (no single `GwFacs` entry, since they're synthesized at display time)
+  still go through the old `GLOBALS->traces` walk. Verified via gdb:
+  loaded a VCD with two never-displayed signals carrying real X regions,
+  called `list_x_show()` directly, and confirmed via the live GTK widget
+  tree that all 4 X-like intervals were found with correct paths/ranges.
 
 ## Up next, in order
 
@@ -245,18 +262,13 @@ Re-ranked by value (not just effort) after a deliberate stock-take of
 everything shipped so far plus standard Verdi/nWave parity gaps -- see
 the conversation history for the full reasoning behind this ordering.
 
-1. **List X: scan the whole design hierarchy**, not just currently-
-   displayed traces. Today you must already suspect *and display* the
-   buggy signal before List X can find it, which defeats its actual
-   point (discovering unknown X sources you didn't know to look for).
-
-2. **Auto-detect the real DUT under a testbench wrapper** for the
+1. **Auto-detect the real DUT under a testbench wrapper** for the
    gate-level schematic. Removes a near-universal first-use friction
    point on an already-shipped feature -- most real designs are loaded
    as full testbenches, not bare DUTs, and today that just fails with
    the `$finish`-during-elaboration error.
 
-3. **Add an MCP server to gtkwave**, exposing the existing WCP command
+2. **Add an MCP server to gtkwave**, exposing the existing WCP command
    set (add_items/add_markers/get_item_list/...) plus this session's new
    netlist-query/schematic/search/List-X/bus-op backends as MCP tools.
    Directly motivated by this session's own repeated pain: with no MCP
@@ -270,67 +282,67 @@ the conversation history for the full reasoning behind this ordering.
    architecture -- moderate effort, unusually high value given how much
    of this session's own friction it would have prevented.
 
-4. **Undo/redo (or at minimum a reversible soft-delete) for destructive
+3. **Undo/redo (or at minimum a reversible soft-delete) for destructive
    trace-list operations**: Ungroup, Delete, Combine, Expand. None of
    this session's group/bus features have a safety net; one misclick
    loses real organization work with no way back.
 
-5. **Bus Operations: a real Edit/Adjust Bus composition editor**
+4. **Bus Operations: a real Edit/Adjust Bus composition editor**
    (reorder/add/remove constituent bits of an existing bus). Rounds out
    the originally-scoped "Create/Edit/Adjust/Reverse Bus" item -- only
    Expand-as-sub-bus and Reverse got built.
 
-6. **Waveform Compare / structured two-run diffing.** One of the most-
+5. **Waveform Compare / structured two-run diffing.** One of the most-
    requested Verdi/nWave parity features. Big lift, big payoff.
 
-7. **Struct/union display** (expandable field tree) and **derived/virtual
+6. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-8. **Editable/exportable schematic mode** (reposition instances,
+7. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-9. **Verify Group Manager's renames/new structure round-trip through
+8. **Verify Group Manager's renames/new structure round-trip through
    save/reload.** Lower risk than the Compress Time Range persistence
    gap since groups reuse existing trace-list save infra, but should be
    explicitly checked, not assumed.
 
-10. **Time-span Comments** (range annotations, distinct from point
+9. **Time-span Comments** (range annotations, distinct from point
     markers) -- natural complement to markers/groups for documenting a
     debug session.
 
-11. **Compress Time Range: make touch-gesture pinch-zoom compression-
+10. **Compress Time Range: make touch-gesture pinch-zoom compression-
     aware.** The one documented gap in that feature -- the existing
     pinch-zoom math is self-referential and would need real algebraic
     rework, not a mechanical substitution.
 
-12. **Auto Update** (live-tail a still-running simulation). A genuinely
+11. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature.
 
-13. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+12. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-14. **Source browsing beyond single-file cross-probe** -- multi-file/
+13. **Source browsing beyond single-file cross-probe** -- multi-file/
     project-wide source navigation.
 
-15. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+14. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-16. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+15. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-17. **Compress Time Range: compression-aware page/scroll-increment
+16. **Compress Time Range: compression-aware page/scroll-increment
     math.** Precision polish (paging jumps a slightly wrong amount
     across a compressed span); low urgency.
 
-18. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+17. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
