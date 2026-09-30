@@ -401,6 +401,21 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   new function return a larger, hand-verified value than the old
   formula, confirmed the real `GtkAdjustment`'s `page_increment`
   property reflects the fix.
+- **Source browsing: let users manually switch between known source
+  files.** The embedded source cross-probe panel could only ever show
+  whatever file an external cross-probe jump last pointed it at -- no
+  way to browse to a *different* file while looking at one. New
+  `GtkComboBoxText` above the path label, populated from
+  `GLOBALS->netlist_source_files` (hidden until that's configured),
+  reusing the existing `source_panel_show_file_line()` pipeline
+  unchanged. Deliberately scoped to this one increment, not a full
+  project explorer (file tree, tabs, per-file history) -- that needs a
+  real module-to-source-file mapping slang-netlist doesn't expose today.
+  Verified via gdb against a real two-file design: confirmed the combo
+  lists both files with the right one pre-selected, then selected the
+  other file via the real `gtk_combo_box_set_active_id()` call (firing
+  the real "changed" signal end-to-end) and confirmed both the path
+  label and the actual loaded buffer content reflect the switch.
 
 ## Up next, in order
 
@@ -431,16 +446,13 @@ the conversation history for the full reasoning behind this ordering.
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-6. **Source browsing beyond single-file cross-probe** -- multi-file/
-    project-wide source navigation.
-
-7. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+6. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-8. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+7. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-9. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+8. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
