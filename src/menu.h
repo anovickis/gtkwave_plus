@@ -359,6 +359,11 @@ void menu_dataformat_xlate_proc_1(gpointer null_data, guint callback_action, Gtk
 void menu_dataformat_analog_off(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_dataformat_analog_step(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_dataformat_analog_interpol(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_dataformat_analog_interpol_step(gpointer null_data, guint callback_action,
+                                          GtkWidget *widget);
+void menu_dataformat_analog_resize_screen(gpointer null_data, guint callback_action,
+                                         GtkWidget *widget);
+void menu_dataformat_analog_resize_all(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_colorformat_0(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_colorformat_1(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_colorformat_2(gpointer null_data, guint callback_action, GtkWidget *widget);

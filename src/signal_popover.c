@@ -52,6 +52,19 @@ static const RadixEntry RADIX_ENTRIES[] = {
     {"ASCII", menu_dataformat_ascii},
 };
 
+// Same backend the classic right-click popup menu's "/Data Format/Analog/..."
+// submenu already calls (menu.c) -- this popover just didn't have an entry
+// point for it yet. Not restricted to real-typed signals; works on any
+// selected trace, same as the classic menu.
+static const RadixEntry ANALOG_ENTRIES[] = {
+    {"Off", menu_dataformat_analog_off},
+    {"Step", menu_dataformat_analog_step},
+    {"Interp", menu_dataformat_analog_interpol},
+    {"Interp+", menu_dataformat_analog_interpol_step},
+    {"Screen", menu_dataformat_analog_resize_screen},
+    {"All Data", menu_dataformat_analog_resize_all},
+};
+
 // Apply the action tied to a button, then close the popover it lives in.
 static void on_action_button_clicked(GtkButton *button, gpointer user_data)
 {
@@ -312,6 +325,15 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
         gtk_box_pack_start(GTK_BOX(radix_box), make_radix_button(&RADIX_ENTRIES[i]), FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(box), radix_box, FALSE, FALSE, 0);
+
+    add_section_label(box, "Analog");
+
+    GtkWidget *analog_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    for (gsize i = 0; i < G_N_ELEMENTS(ANALOG_ENTRIES); i++) {
+        gtk_box_pack_start(
+            GTK_BOX(analog_box), make_radix_button(&ANALOG_ENTRIES[i]), FALSE, FALSE, 0);
+    }
+    gtk_box_pack_start(GTK_BOX(box), analog_box, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
 
