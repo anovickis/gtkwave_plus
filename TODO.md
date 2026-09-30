@@ -14,7 +14,7 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   Schematic (rendered diagram), both via GwNetlistQuery -> slang-netlist.
 - **Schematic view (first cut).** Graphviz-rendered fan-in cone with live
   value annotation on each node, re-rendered whenever the cursor/primary
-  marker moves. Static image only so far -- see #2 below.
+  marker moves.
 - **Signal Event Report.** Rising/falling edge counts, duty cycle, longest
   continuous-high span, over the primary<->baseline marker span.
 - **Live value annotation in the source cross-probe panel** when the
@@ -37,64 +37,68 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   name[bit-range]` already works untouched by just passing a bit-range-
   suffixed signal_path straight through (no code change needed); Show
   Drivers' UI doesn't expose that yet, but the backend already supports it.
+- **Make the schematic actually clickable.** Real per-node pixel bounding
+  boxes parsed from Graphviz's `-Tplain` output (not a flat PNG), hit-
+  tested against mouse clicks via a `GtkEventBox` over the `GtkImage`.
+  Left-click reports the node's signal path/label in the status bar,
+  double-click on a signal node re-renders the schematic centered on it
+  (push/pop-into-instance navigation), right-click opens a context menu
+  scoped to that node (Show Drivers / Show Loads). Structural nodes
+  (Assignment/Conditional, no backing signal) report as non-clickable
+  rather than silently no-opping. Along the way, found and fixed a real
+  pre-existing crash in `bsearch_node()` (out-of-bounds `harray[1]` read
+  for any node with only one history entry, e.g. a signal that never
+  transitions) -- this is what unblocked verifying the clicking code
+  end-to-end.
+  Not done yet, deferred to the polish pass below: collapse/expand a
+  module to a black box, and Add to Waveform / drag a schematic signal
+  into the wave pane.
 
 ## Up next, in order
 
-1. **Make the schematic actually clickable**, using node bounding boxes
-   from Graphviz's own `-Txdot`/`-Tplain` output instead of a flat PNG.
-   This is the real foundation the whole "static image" complaint traces
-   back to, and it's a smaller lift than it looks -- Graphviz already
-   computes per-node positions, so this is an overlay/hit-testing problem,
-   not a new rendering engine. Directly unlocks, cheaply, once done:
-   - Double-click a net to isolate its driver->load path (step with n/N)
-   - Right-click menus scoped per element type (signal/instance/net)
-   - Real push/pop-into-instance navigation (replaces "always re-render
-     the whole cone")
-   - Collapse/expand a module to a black box
-   - Add to Waveform / drag a schematic signal into the wave pane
-
-2. **Search UX rework**: exact/wildcard bus-value search, a "stable for
+1. **Search UX rework**: exact/wildcard bus-value search, a "stable for
    >= N time units" constraint, jump to the Nth occurrence. This was the
    original "search is hard to use" complaint from day one and has zero
-   dependency on the netlist/schematic work, so it can happen in parallel
-   with #1 whenever there's a natural break.
+   dependency on the netlist/schematic work, so it can happen whenever
+   there's a natural break.
 
-3. **List X / Trace X**: scan the loaded waveform for X (unknown) regions,
+2. **List X / Trace X**: scan the loaded waveform for X (unknown) regions,
    list them, then trace backward from a specific occurrence to its
    root-cause driver. High ROI -- reuses the existing driver-query backend
    as-is, just a different entry point (seeded from a bad value instead of
    a signal name).
 
-4. **Recolor schematic net lines by logic value** (not just the label
+3. **Recolor schematic net lines by logic value** (not just the label
    text) + toolbar buttons to step the annotated time to the next/previous
-   transition without leaving the schematic. Natural polish pass once #1
-   lands, and reuses the live-annotation plumbing already built.
+   transition without leaving the schematic. Natural polish pass now that
+   clicking lands, and reuses the live-annotation plumbing already built.
 
-5. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
+4. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
    expand-as-sub-bus). Supersedes the plain "no bit-slicing" gap --
    worth doing this instead of a narrower slicing-only feature.
 
-6. **Compress Time Range**: collapse uninteresting time spans to a "+"
+5. **Compress Time Range**: collapse uninteresting time spans to a "+"
    marker. Self-contained, no dependency on anything above.
 
-7. **Group Manager**: a real dialog for nested signal groups, bulk
+6. **Group Manager**: a real dialog for nested signal groups, bulk
    "move to group".
 
-8. **Highlight incomplete/unresolved nets** (dashed line) in the
-   schematic -- worth doing once #1's node metadata exists to hang it off
-   of; low effort at that point.
+7. **Highlight incomplete/unresolved nets** (dashed line) in the
+   schematic -- the clickable schematic's per-node metadata already exists
+   to hang this off of; low effort at this point.
 
-9. **Struct/union display** (expandable field tree) and **derived/virtual
+8. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-10. **Editable/exportable schematic mode** (reposition instances,
-    print/capture), **configurable color themes**, **zoom/pan + a
-    navigation-only "last view" undo**. Polish tier -- do opportunistically
-    alongside #1/#4 rather than as standalone efforts.
+9. **Editable/exportable schematic mode** (reposition instances,
+   print/capture, collapse/expand a module to a black box, drag a
+   schematic signal into the wave pane), **configurable color themes**,
+   **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
+   opportunistically alongside #3 rather than as standalone efforts.
 
-11. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+10. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but the highest-effort item here (needs a real sub-timestamp data
     model, not just a UI); lowest priority-to-effort ratio on this list.
 
