@@ -235,6 +235,7 @@ config_inc = include_directories('.')
 
 subdir('lib')
 subdir('src')
+subdir('mcp')
 subdir('man')
 subdir('share')
 subdir('examples')
