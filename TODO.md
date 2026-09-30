@@ -294,6 +294,21 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   gtkwave process (get_item_list reflecting an earlier call's results),
   and confirmed a real WCP-level error surfaces correctly as
   `isError: true`.
+- **Undo for destructive trace-list operations** (Ungroup, Delete,
+  Combine Up/Down, Expand). A bounded (10-deep) linear undo stack of
+  whole-session-state snapshots, reusing the existing savefile
+  serialization (`write_save_helper()`/`read_save_helper()`) rather than
+  a hand-rolled trace-list clone -- confirmed safe to call mid-session
+  since `parsewavline()`'s own `"dumpfile"` directive handler is a
+  deliberate no-op, so replaying a snapshot only restores trace/group/
+  marker/color state and never tries to re-open the dump file. New
+  Edit > Undo (Ctrl+Z). Verified via gdb: added two real signals via the
+  new `gtkwave-mcp` bridge, selected them, called `menu_delete_traces()`
+  directly (confirmed the trace list emptied), then `menu_undo()`
+  (confirmed both signals came back with their exact original names and
+  flags). Scoped to a single-level "redo" via snapshots, not a full
+  command-pattern undo/redo tree (no Redo yet -- an accepted, documented
+  boundary, not an oversight).
 
 ## Up next, in order
 
@@ -301,67 +316,62 @@ Re-ranked by value (not just effort) after a deliberate stock-take of
 everything shipped so far plus standard Verdi/nWave parity gaps -- see
 the conversation history for the full reasoning behind this ordering.
 
-1. **Undo/redo (or at minimum a reversible soft-delete) for destructive
-   trace-list operations**: Ungroup, Delete, Combine, Expand. None of
-   this session's group/bus features have a safety net; one misclick
-   loses real organization work with no way back.
-
-2. **Bus Operations: a real Edit/Adjust Bus composition editor**
+1. **Bus Operations: a real Edit/Adjust Bus composition editor**
    (reorder/add/remove constituent bits of an existing bus). Rounds out
    the originally-scoped "Create/Edit/Adjust/Reverse Bus" item -- only
    Expand-as-sub-bus and Reverse got built.
 
-3. **Waveform Compare / structured two-run diffing.** One of the most-
+2. **Waveform Compare / structured two-run diffing.** One of the most-
    requested Verdi/nWave parity features. Big lift, big payoff.
 
-4. **Struct/union display** (expandable field tree) and **derived/virtual
+3. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-5. **Editable/exportable schematic mode** (reposition instances,
+4. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-6. **Verify Group Manager's renames/new structure round-trip through
+5. **Verify Group Manager's renames/new structure round-trip through
    save/reload.** Lower risk than the Compress Time Range persistence
    gap since groups reuse existing trace-list save infra, but should be
    explicitly checked, not assumed.
 
-7. **Time-span Comments** (range annotations, distinct from point
+6. **Time-span Comments** (range annotations, distinct from point
     markers) -- natural complement to markers/groups for documenting a
     debug session.
 
-8. **Compress Time Range: make touch-gesture pinch-zoom compression-
+7. **Compress Time Range: make touch-gesture pinch-zoom compression-
     aware.** The one documented gap in that feature -- the existing
     pinch-zoom math is self-referential and would need real algebraic
     rework, not a mechanical substitution.
 
-9. **Auto Update** (live-tail a still-running simulation). A genuinely
+8. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature.
 
-10. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+9. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-11. **Source browsing beyond single-file cross-probe** -- multi-file/
+10. **Source browsing beyond single-file cross-probe** -- multi-file/
     project-wide source navigation.
 
-12. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+11. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-13. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+12. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-14. **Compress Time Range: compression-aware page/scroll-increment
+13. **Compress Time Range: compression-aware page/scroll-increment
     math.** Precision polish (paging jumps a slightly wrong amount
     across a compressed span); low urgency.
 
-15. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+14. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
