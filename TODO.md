@@ -53,54 +53,63 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   Not done yet, deferred to the polish pass below: collapse/expand a
   module to a black box, and Add to Waveform / drag a schematic signal
   into the wave pane.
+- **Search UX rework.** Extended the existing Pattern Search dialog
+  (`strace.c`) rather than building a new one: a new `ST_VALUE_EXACT`
+  search type does case-insensitive exact/wildcard matching (`*`/`?`) on
+  a signal's ascii value, scalar or vector; a "Stable for >=" spinner
+  rejects a candidate match unless it holds for at least N time units
+  (`candidate_is_stable()`, shared by Fwd/Bkwd and Mark); a "Jump to
+  occurrence #" spinner + Go button searches from the start of the time
+  range and stops directly on match #N. Verified via gdb forced calls
+  against a live design (regression-checked the existing Fwd/Bkwd path
+  first, then each new piece) since driving the actual GTK comboboxes
+  isn't practical headless.
+  Known gap found along the way, not fixed (pre-existing, unrelated to
+  this change): WCP's `add_items` fails to resolve a multi-bit vector
+  signal path (e.g. `tb.value`) even though the identical scalar-signal
+  form works fine -- left as a future bug to chase.
 
 ## Up next, in order
 
-1. **Search UX rework**: exact/wildcard bus-value search, a "stable for
-   >= N time units" constraint, jump to the Nth occurrence. This was the
-   original "search is hard to use" complaint from day one and has zero
-   dependency on the netlist/schematic work, so it can happen whenever
-   there's a natural break.
-
-2. **List X / Trace X**: scan the loaded waveform for X (unknown) regions,
+1. **List X / Trace X**: scan the loaded waveform for X (unknown) regions,
    list them, then trace backward from a specific occurrence to its
    root-cause driver. High ROI -- reuses the existing driver-query backend
    as-is, just a different entry point (seeded from a bad value instead of
    a signal name).
 
-3. **Recolor schematic net lines by logic value** (not just the label
+2. **Recolor schematic net lines by logic value** (not just the label
    text) + toolbar buttons to step the annotated time to the next/previous
    transition without leaving the schematic. Natural polish pass now that
    clicking lands, and reuses the live-annotation plumbing already built.
 
-4. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
+3. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
    expand-as-sub-bus). Supersedes the plain "no bit-slicing" gap --
    worth doing this instead of a narrower slicing-only feature.
 
-5. **Compress Time Range**: collapse uninteresting time spans to a "+"
+4. **Compress Time Range**: collapse uninteresting time spans to a "+"
    marker. Self-contained, no dependency on anything above.
 
-6. **Group Manager**: a real dialog for nested signal groups, bulk
+5. **Group Manager**: a real dialog for nested signal groups, bulk
    "move to group".
 
-7. **Highlight incomplete/unresolved nets** (dashed line) in the
+6. **Highlight incomplete/unresolved nets** (dashed line) in the
    schematic -- the clickable schematic's per-node metadata already exists
    to hang this off of; low effort at this point.
 
-8. **Struct/union display** (expandable field tree) and **derived/virtual
+7. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-9. **Editable/exportable schematic mode** (reposition instances,
+8. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
-   opportunistically alongside #3 rather than as standalone efforts.
+   opportunistically alongside #2 rather than as standalone efforts.
 
-10. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
-    but the highest-effort item here (needs a real sub-timestamp data
-    model, not just a UI); lowest priority-to-effort ratio on this list.
+9. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+   but the highest-effort item here (needs a real sub-timestamp data
+   model, not just a UI); lowest priority-to-effort ratio on this list.
 
 ## Noted, not detailed
 
