@@ -9,6 +9,7 @@
 
 #include "source_panel.h"
 #include "globals.h"
+#include "signal_value_lookup.h"
 #include <string.h>
 
 // Verilog/SystemVerilog keywords, split into two tag classes purely for a
@@ -187,6 +188,149 @@ static void highlight_source(GtkTextBuffer *buffer, const gchar *text)
     g_array_free(masked, TRUE);
 }
 
+// Live value annotation: whenever the cursor/primary marker moves, every
+// identifier in the currently-shown source that matches the leaf name of a
+// signal currently displayed in the waveform view gets its value inserted
+// inline as a small child widget right after it (a debugger-style "= value"
+// hint). Deliberately scoped to *displayed* traces rather than every signal
+// in the design -- matching against the whole design's namespace by bare
+// leaf name would be far noisier (e.g. "clk" exists in every scope), and
+// there's no reverse source-location-to-scope resolution available to
+// disambiguate. Also doesn't distinguish identifiers inside comments/strings
+// from real references -- a rare, accepted imprecision (see
+// collect_masked_spans() above for the equivalent mask highlight_source()
+// uses; reusing it here would need this pass folded into that one).
+
+static GHashTable *build_leaf_to_path_from_traces(void)
+{
+    GHashTable *map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+
+    GwTrace *t = GLOBALS->traces.first;
+    while (t != NULL) {
+        if (t->name_full != NULL && !(t->flags & (TR_BLANK | TR_ANALOG_BLANK_STRETCH))) {
+            const gchar *dot_pos = strrchr(t->name_full, '.');
+            const gchar *leaf = dot_pos != NULL ? dot_pos + 1 : t->name_full;
+            if (!g_hash_table_contains(map, leaf)) {
+                g_hash_table_insert(map, g_strdup(leaf), g_strdup(t->name_full));
+            }
+        }
+        t = t->t_next;
+    }
+
+    return map;
+}
+
+static void clear_value_annotations(GtkTextBuffer *buffer)
+{
+    for (guint i = 0; i < GLOBALS->source_value_anchors->len; i++) {
+        GtkTextChildAnchor *anchor = g_ptr_array_index(GLOBALS->source_value_anchors, i);
+        if (gtk_text_child_anchor_get_deleted(anchor)) {
+            continue;
+        }
+
+        GtkTextIter start;
+        gtk_text_buffer_get_iter_at_child_anchor(buffer, &start, anchor);
+        GtkTextIter end = start;
+        gtk_text_iter_forward_char(&end);
+        gtk_text_buffer_delete(buffer, &start, &end);
+    }
+
+    g_ptr_array_set_size(GLOBALS->source_value_anchors, 0);
+}
+
+typedef struct
+{
+    gint char_end_offset;
+    gchar *value; /* free_2()-owned */
+} PendingAnnotation;
+
+static void refresh_value_annotations(void)
+{
+    if (GLOBALS->source_text_view == NULL || GLOBALS->source_last_path == NULL ||
+       GLOBALS->dump_file == NULL) {
+        return;
+    }
+
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(GLOBALS->source_text_view));
+    clear_value_annotations(buffer);
+
+    GHashTable *leaf_to_path = build_leaf_to_path_from_traces();
+    if (g_hash_table_size(leaf_to_path) == 0) {
+        g_hash_table_unref(leaf_to_path);
+        return;
+    }
+
+    GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
+    GwTime cursor_time = gw_marker_get_position(primary_marker);
+
+    GtkTextIter buf_start, buf_end;
+    gtk_text_buffer_get_start_iter(buffer, &buf_start);
+    gtk_text_buffer_get_end_iter(buffer, &buf_end);
+    gchar *text = gtk_text_buffer_get_text(buffer, &buf_start, &buf_end, FALSE);
+
+    GRegex *ident_re = g_regex_new("\\b[A-Za-z_][A-Za-z0-9_]*\\b", 0, 0, NULL);
+    GArray *pending = g_array_new(FALSE, FALSE, sizeof(PendingAnnotation));
+
+    if (ident_re != NULL) {
+        GMatchInfo *match_info = NULL;
+        g_regex_match(ident_re, text, 0, &match_info);
+        while (g_match_info_matches(match_info)) {
+            gint start = 0, end = 0;
+            g_match_info_fetch_pos(match_info, 0, &start, &end);
+            gchar *word = g_match_info_fetch(match_info, 0);
+
+            const gchar *full_path = g_hash_table_lookup(leaf_to_path, word);
+            if (full_path != NULL) {
+                gchar *value = signal_value_at_time(full_path, cursor_time);
+                if (value != NULL) {
+                    PendingAnnotation pa = {g_utf8_pointer_to_offset(text, text + end), value};
+                    g_array_append_val(pending, pa);
+                }
+            }
+            g_free(word);
+
+            g_match_info_next(match_info, NULL);
+        }
+        g_match_info_free(match_info);
+        g_regex_unref(ident_re);
+    }
+
+    g_free(text);
+    g_hash_table_unref(leaf_to_path);
+
+    // Insert back-to-front so each anchor insertion doesn't shift the
+    // offsets of matches still waiting to be inserted.
+    for (gint i = (gint)pending->len - 1; i >= 0; i--) {
+        PendingAnnotation *pa = &g_array_index(pending, PendingAnnotation, i);
+
+        GtkTextIter iter;
+        gtk_text_buffer_get_iter_at_offset(buffer, &iter, pa->char_end_offset);
+
+        GtkTextChildAnchor *anchor = gtk_text_buffer_create_child_anchor(buffer, &iter);
+
+        gchar *markup = g_markup_printf_escaped(
+            "<span foreground=\"#4fc1ff\" size=\"small\"> = %s</span>", pa->value);
+        GtkWidget *label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(label), markup);
+        g_free(markup);
+        gtk_widget_show(label);
+
+        gtk_text_view_add_child_at_anchor(GTK_TEXT_VIEW(GLOBALS->source_text_view), label, anchor);
+        g_ptr_array_add(GLOBALS->source_value_anchors, anchor);
+
+        free_2(pa->value);
+    }
+
+    g_array_free(pending, TRUE);
+}
+
+static void on_project_unnamed_marker_changed_for_source(GwProject *project, gpointer user_data)
+{
+    (void)project;
+    (void)user_data;
+    refresh_value_annotations();
+}
+
 GtkWidget *create_source_panel(void)
 {
     GLOBALS->source_path_label = gtk_label_new("(no source)");
@@ -240,6 +384,12 @@ GtkWidget *create_source_panel(void)
     gtk_box_pack_start(GTK_BOX(vbox), scrolled_window, TRUE, TRUE, 0);
 
     GLOBALS->source_panel_root = vbox;
+    GLOBALS->source_value_anchors = g_ptr_array_new();
+
+    g_signal_connect(GLOBALS->project,
+                     "unnamed-marker-changed",
+                     G_CALLBACK(on_project_unnamed_marker_changed_for_source),
+                     NULL);
 
     // Collapsed by default -- users who never cross-probe see no layout
     // change. gtk_widget_set_no_show_all() keeps a later gtk_widget_show_all()
@@ -262,6 +412,11 @@ static void load_file_into_buffer(const char *path)
         gtk_text_buffer_set_text(buffer, contents, (gint)length);
         highlight_source(buffer, contents);
         g_free(contents);
+
+        // gtk_text_buffer_set_text() above already destroyed any child
+        // anchors from the previous file -- just drop our now-stale
+        // tracking of them, nothing left to remove from the buffer.
+        g_ptr_array_set_size(GLOBALS->source_value_anchors, 0);
     } else {
         gchar *msg = g_strdup_printf("Could not read file:\n%s\n\n%s",
                                      path,
@@ -325,6 +480,7 @@ void source_panel_show_file_line(const char *path, guint32 line_number)
     g_free(label_text);
 
     source_panel_set_visible(TRUE);
+    refresh_value_annotations();
 }
 
 void source_panel_set_visible(gboolean visible)
