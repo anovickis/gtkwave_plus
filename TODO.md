@@ -309,6 +309,25 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   flags). Scoped to a single-level "redo" via snapshots, not a full
   command-pattern undo/redo tree (no Redo yet -- an accepted, documented
   boundary, not an oversight).
+- **Bus Operations: Edit Bus Composition** (reorder/add/remove
+  constituent bits of an existing bus). Rounds out the originally-scoped
+  "Create/Edit/Adjust/Reverse Bus" item. New popover dialog: Move Up/
+  Move Down/Remove on a selected bit, an "Add Bit..." entry that
+  resolves a typed signal path (rejecting another multi-bit bus).
+  Reuses `expand_subbus()`'s exact per-bit attribute composition and
+  dual-representation handling; Apply builds a brand-new
+  `"<original>_edited"` bus via the same `bits2vector()`/`AddVector()`
+  backend -- deliberately non-destructive, same precedent
+  Expand-as-Sub-Bus already set. Verified via gdb forced calls: broke in
+  at the real (unmodified) dialog's `gtk_dialog_run()`, directly
+  manipulated the real in-memory `entries` array (reorder + remove +
+  add a genuinely different scalar signal), then faked the dialog's OK
+  response to let the real `apply_composition()` run -- confirmed the
+  resulting new trace had exactly that edited composition, in order,
+  including the mixed extvals-bit + plain-scalar-bit case. Didn't
+  separately drive the GTK button-click handlers themselves (thin,
+  low-risk wrappers around the same array ops already exercised
+  directly) -- a deliberate scoping choice.
 
 ## Up next, in order
 
@@ -316,62 +335,57 @@ Re-ranked by value (not just effort) after a deliberate stock-take of
 everything shipped so far plus standard Verdi/nWave parity gaps -- see
 the conversation history for the full reasoning behind this ordering.
 
-1. **Bus Operations: a real Edit/Adjust Bus composition editor**
-   (reorder/add/remove constituent bits of an existing bus). Rounds out
-   the originally-scoped "Create/Edit/Adjust/Reverse Bus" item -- only
-   Expand-as-sub-bus and Reverse got built.
-
-2. **Waveform Compare / structured two-run diffing.** One of the most-
+1. **Waveform Compare / structured two-run diffing.** One of the most-
    requested Verdi/nWave parity features. Big lift, big payoff.
 
-3. **Struct/union display** (expandable field tree) and **derived/virtual
+2. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-4. **Editable/exportable schematic mode** (reposition instances,
+3. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-5. **Verify Group Manager's renames/new structure round-trip through
+4. **Verify Group Manager's renames/new structure round-trip through
    save/reload.** Lower risk than the Compress Time Range persistence
    gap since groups reuse existing trace-list save infra, but should be
    explicitly checked, not assumed.
 
-6. **Time-span Comments** (range annotations, distinct from point
+5. **Time-span Comments** (range annotations, distinct from point
     markers) -- natural complement to markers/groups for documenting a
     debug session.
 
-7. **Compress Time Range: make touch-gesture pinch-zoom compression-
+6. **Compress Time Range: make touch-gesture pinch-zoom compression-
     aware.** The one documented gap in that feature -- the existing
     pinch-zoom math is self-referential and would need real algebraic
     rework, not a mechanical substitution.
 
-8. **Auto Update** (live-tail a still-running simulation). A genuinely
+7. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature.
 
-9. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+8. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-10. **Source browsing beyond single-file cross-probe** -- multi-file/
+9. **Source browsing beyond single-file cross-probe** -- multi-file/
     project-wide source navigation.
 
-11. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+10. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-12. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+11. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-13. **Compress Time Range: compression-aware page/scroll-increment
+12. **Compress Time Range: compression-aware page/scroll-increment
     math.** Precision polish (paging jumps a slightly wrong amount
     across a compressed span); low urgency.
 
-14. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+13. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
