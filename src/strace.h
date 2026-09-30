@@ -42,6 +42,9 @@ enum st_stype
     ST_RISE,
     ST_FALL,
     ST_ANY,
+    /* appended after the above rather than reordered, so previously-saved
+     * session state that persists a raw st_stype byte stays valid */
+    ST_VALUE_EXACT,
     WAVE_STYPE_COUNT
 };
 
@@ -104,6 +107,9 @@ struct strace_ctx_t
     signed char mark_idx_end;
     signed char shadow_mark_idx_start;
     signed char shadow_mark_idx_end;
+
+    GwTime min_stable_duration; /* 0 = no constraint; else a match must hold
+                                   its value for at least this long */
 };
 
 void strace_search(int direction);

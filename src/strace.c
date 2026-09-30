@@ -13,6 +13,8 @@
 #include "strace.h"
 #include "currenttime.h"
 
+static void strace_search_2(int direction, int is_last_iteration);
+
 #define WV_STRACE_CTX "strace_ctx"
 
 /* need to do this every time you connect a signal */
@@ -32,7 +34,8 @@ static const char *stype[WAVE_STYPE_COUNT] = {"Don't Care",
                                               "String",
                                               "Rising Edge",
                                               "Falling Edge",
-                                              "Any Edge"};
+                                              "Any Edge",
+                                              "Value (Exact/Wildcard)"};
 
 /*
  * naive nonoptimized case insensitive strstr
@@ -242,6 +245,49 @@ static void backwards_callback(GtkWidget *widget, GtkWidget *nothing)
     strace_search(STRACE_BACKWARD);
 }
 
+static void stable_duration_changed(GtkSpinButton *widget, gpointer user_data)
+{
+    (void)user_data;
+
+    GET_WV_STRACE_CURWIN(widget);
+
+    GLOBALS->strace_ctx->min_stable_duration = (GwTime)gtk_spin_button_get_value(widget);
+}
+
+/*
+ * one-shot "jump straight to occurrence #N" -- always counts from the
+ * start of the time range (not from wherever the cursor happens to be),
+ * since that's the only sensible meaning of "the Nth occurrence" as a
+ * single-click action.
+ */
+static void strace_search_count(int direction, int count)
+{
+    int i;
+
+    if (count < 1) {
+        count = 1;
+    }
+
+    for (i = 0; i < count; i++) {
+        strace_search_2(direction, (i == count - 1));
+    }
+}
+
+static void goto_occurrence_callback(GtkWidget *widget, gpointer spin_widget)
+{
+    int n;
+    GwMarker *primary_marker;
+
+    GET_WV_STRACE_CURWIN(widget);
+
+    n = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin_widget));
+
+    primary_marker = gw_project_get_primary_marker(GLOBALS->project);
+    gw_marker_set_enabled(primary_marker, FALSE);
+
+    strace_search_count(STRACE_FORWARD, n);
+}
+
 static void mark_callback(GtkWidget *widget, GtkWidget *nothing)
 {
     (void)nothing;
@@ -328,6 +374,7 @@ void tracesearchbox(const char *title, GCallback func, gpointer data)
     GtkWidget *vbox, *hbox, *small_hbox, *vbox_g, *label;
     GtkWidget *button1, *button1a, *button1b, *button1c, *button2, *scrolled_win, *frame,
         *separator;
+    GtkWidget *stable_spin, *occurrence_spin, *button_goto;
     GtkSizeGroup *label_group;
     GwTrace *t;
     int i;
@@ -525,6 +572,45 @@ void tracesearchbox(const char *title, GCallback func, gpointer data)
     gtk_widget_show_all(hbox);
     gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
 
+    /* stable-for-N-time-units constraint */
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+
+    label = gtk_label_new("Stable for >=");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_box_pack_start(GTK_BOX(hbox), label, TRUE, TRUE, 0);
+    gtk_size_group_add_widget(label_group, label);
+
+    stable_spin = gtk_spin_button_new_with_range(0.0, 1e15, 1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(stable_spin),
+                              (gdouble)GLOBALS->strace_ctx->min_stable_duration);
+    WV_STRACE_CURWIN(stable_spin);
+    g_signal_connect(stable_spin, "value-changed", G_CALLBACK(stable_duration_changed), NULL);
+    gtk_box_pack_start(GTK_BOX(hbox), stable_spin, FALSE, FALSE, 0);
+
+    gtk_widget_show_all(hbox);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
+
+    /* jump straight to occurrence #N, from the start of the time range */
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+
+    label = gtk_label_new("Jump to occurrence #");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    gtk_box_pack_start(GTK_BOX(hbox), label, TRUE, TRUE, 0);
+    gtk_size_group_add_widget(label_group, label);
+
+    occurrence_spin = gtk_spin_button_new_with_range(1.0, 1000000.0, 1.0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(occurrence_spin), 1.0);
+    WV_STRACE_CURWIN(occurrence_spin);
+    gtk_box_pack_start(GTK_BOX(hbox), occurrence_spin, FALSE, FALSE, 0);
+
+    button_goto = gtk_button_new_with_label("Go");
+    gtkwave_signal_connect(button_goto, "clicked", G_CALLBACK(goto_occurrence_callback), occurrence_spin);
+    WV_STRACE_CURWIN(button_goto);
+    gtk_box_pack_start(GTK_BOX(hbox), button_goto, FALSE, FALSE, 0);
+
+    gtk_widget_show_all(hbox);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
+
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
     gtk_widget_show(hbox);
@@ -571,6 +657,48 @@ void tracesearchbox(const char *title, GCallback func, gpointer data)
     gtk_widget_set_can_default(button2, TRUE);
 
     gtk_widget_show(GLOBALS->strace_ctx->window_strace_c_10);
+}
+
+/*
+ * a candidate match at maxbase is "stable" if every trace we actually care
+ * about (value != ST_DC) doesn't transition again for at least min_duration.
+ * min_duration <= 0 means the constraint is disabled.
+ */
+static gboolean candidate_is_stable(GwTime maxbase, GwTime min_duration)
+{
+    struct strace *s;
+    GwTime min_next;
+
+    if (min_duration <= 0) {
+        return TRUE;
+    }
+
+    min_next = MAX_HISTENT_TIME;
+    s = GLOBALS->strace_ctx->straces;
+    while (s) {
+        GwTrace *t = s->trace;
+        GwTime next_time = MAX_HISTENT_TIME;
+
+        if (s->value != ST_DC) {
+            if (!t->vector) {
+                if (s->his.h->next) {
+                    next_time = strace_adjust(s->his.h->next->time, t->shift);
+                }
+            } else {
+                if (s->his.v->next) {
+                    next_time = strace_adjust(s->his.v->next->time, t->shift);
+                }
+            }
+
+            if (next_time < min_next) {
+                min_next = next_time;
+            }
+        }
+
+        s = s->next;
+    }
+
+    return (min_next - maxbase) >= min_duration;
 }
 
 /*
@@ -775,6 +903,18 @@ static void strace_search_2(int direction, int is_last_iteration)
                         }
                         break;
 
+                    case ST_VALUE_EXACT:
+                        totaltraces++;
+                        if (s->string != NULL) {
+                            char str_upper[2];
+                            str_upper[0] = (char)toupper((unsigned char)str[0]);
+                            str_upper[1] = 0;
+                            if (g_pattern_match_simple(s->string, str_upper)) {
+                                s->search_result = 1;
+                            }
+                        }
+                        break;
+
                     default:
                         fprintf(stderr, "Internal error: st_type of %d\n", s->value);
                         exit(255);
@@ -889,6 +1029,17 @@ static void strace_search_2(int direction, int is_last_iteration)
                                 s->search_result = 1;
                         break;
 
+                    case ST_VALUE_EXACT:
+                        totaltraces++;
+                        if (s->string != NULL && chval != NULL) {
+                            gchar *chval_upper = g_ascii_strup(chval, -1);
+                            if (g_pattern_match_simple(s->string, chval_upper)) {
+                                s->search_result = 1;
+                            }
+                            g_free(chval_upper);
+                        }
+                        break;
+
                     default:
                         fprintf(stderr, "Internal error: st_type of %d\n", s->value);
                         exit(255);
@@ -913,29 +1064,36 @@ static void strace_search_2(int direction, int is_last_iteration)
         }
 
         if (totaltraces) {
+            gboolean logical_match = FALSE;
+
             if (GLOBALS->strace_ctx->logical_mutex[0]) { /* and */
                 if (totaltraces == passcount)
-                    break;
+                    logical_match = TRUE;
             } else if (GLOBALS->strace_ctx->logical_mutex[1]) { /* or */
                 if (passcount) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[2]) { /* xor */
                 if (passcount & 1) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[3]) { /* nand */
                 if (totaltraces != passcount) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[4]) { /* nor */
                 if (!passcount) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[5]) { /* xnor */
                 if (!(passcount & 1)) {
-                    break;
+                    logical_match = TRUE;
                 }
+            }
+
+            if (logical_match &&
+                candidate_is_stable(maxbase, GLOBALS->strace_ctx->min_stable_duration)) {
+                break;
             }
         }
 
@@ -1136,6 +1294,18 @@ GwTime strace_timetrace(GwTime basetime, int notfirst)
                         }
                         break;
 
+                    case ST_VALUE_EXACT:
+                        totaltraces++;
+                        if (s->string != NULL) {
+                            char str_upper[2];
+                            str_upper[0] = (char)toupper((unsigned char)str[0]);
+                            str_upper[1] = 0;
+                            if (g_pattern_match_simple(s->string, str_upper)) {
+                                s->search_result = 1;
+                            }
+                        }
+                        break;
+
                     default:
                         fprintf(stderr, "Internal error: st_type of %d\n", s->value);
                         exit(255);
@@ -1253,6 +1423,17 @@ GwTime strace_timetrace(GwTime basetime, int notfirst)
                         }
                         break;
 
+                    case ST_VALUE_EXACT:
+                        totaltraces++;
+                        if (s->string != NULL && chval != NULL) {
+                            gchar *chval_upper = g_ascii_strup(chval, -1);
+                            if (g_pattern_match_simple(s->string, chval_upper)) {
+                                s->search_result = 1;
+                            }
+                            g_free(chval_upper);
+                        }
+                        break;
+
                     default:
                         fprintf(stderr, "Internal error: st_type of %d\n", s->value);
                         exit(255);
@@ -1278,30 +1459,37 @@ GwTime strace_timetrace(GwTime basetime, int notfirst)
         }
 
         if (totaltraces) {
+            gboolean logical_match = FALSE;
+
             if (GLOBALS->strace_ctx->logical_mutex[0]) { /* and */
                 if (totaltraces == passcount) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[1]) { /* or */
                 if (passcount) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[2]) { /* xor */
                 if (passcount & 1) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[3]) { /* nand */
                 if (totaltraces != passcount) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[4]) { /* nor */
                 if (!passcount) {
-                    break;
+                    logical_match = TRUE;
                 }
             } else if (GLOBALS->strace_ctx->logical_mutex[5]) { /* xnor */
                 if (!(passcount & 1)) {
-                    break;
+                    logical_match = TRUE;
                 }
+            }
+
+            if (logical_match &&
+                candidate_is_stable(maxbase, GLOBALS->strace_ctx->min_stable_duration)) {
+                break;
             }
         }
 
