@@ -20,6 +20,7 @@
 #include "debug.h"
 #include "main.h"
 #include "signal_list.h"
+#include "time_compress.h"
 #include "gw-wave-view.h"
 
 #if !defined _ISOC99_SOURCE
@@ -221,8 +222,8 @@ process_trace:
     rghinv = (rgh < (GLOBALS->tims.start - t->shift)) || (rgh >= (GLOBALS->tims.end - t->shift)) ||
              (rgh >= (GLOBALS->tims.last - t->shift));
 
-    xlft = (lft + t->shift - GLOBALS->tims.start) * GLOBALS->pxns;
-    xrgh = (rgh + t->shift - GLOBALS->tims.start) * GLOBALS->pxns;
+    xlft = gw_time_to_pixel(lft + t->shift);
+    xrgh = gw_time_to_pixel(rgh + t->shift);
 
     xlftd = xlft - x;
     if (xlftd < (gdouble)0.0)
@@ -373,7 +374,6 @@ void button_press_release_common(void)
  * touching that function's existing, well-tested cursor-placement path. */
 static GwTime resolve_pixel_time(gint xin, gint yin)
 {
-    gdouble x, offset, pixstep;
     GwTime newcurr;
 
     if (xin < 0)
@@ -381,14 +381,7 @@ static GwTime resolve_pixel_time(gint xin, gint yin)
     if (xin > (GLOBALS->wavewidth - 1))
         xin = (GLOBALS->wavewidth - 1);
 
-    x = xin;
-
-    pixstep = ((gdouble)GLOBALS->nsperframe) / ((gdouble)GLOBALS->pixelsperframe);
-    newcurr = (GwTime)(offset = ((gdouble)GLOBALS->tims.start) + (x * pixstep));
-
-    if (offset - newcurr > 0.5) {
-        newcurr++;
-    }
+    newcurr = gw_pixel_to_time((gdouble)xin);
 
     if (newcurr > GLOBALS->tims.last) {
         newcurr = GLOBALS->tims.last;

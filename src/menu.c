@@ -32,6 +32,7 @@
 #include "marker_panel.h"
 #include "source_panel.h"
 #include "list_x_view.h"
+#include "time_compress.h"
 #include <cocoa_misc.h>
 #include <assert.h>
 
@@ -2255,6 +2256,24 @@ void menu_combine_up(gpointer null_data, guint callback_action, GtkWidget *widge
         menu_rename(widget, null_data);
     } else {
     }
+}
+
+void menu_compress_time_range(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    time_compress_action_compress_range();
+}
+
+void menu_uncompress_all(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    time_compress_action_uncompress_all();
 }
 
 /**/
@@ -5056,6 +5075,13 @@ static gtkwave_mlist_t menu_items[] = {
     WAVE_GTKIFE("/Edit/Expand", "F3", menu_expand, WV_MENU_EE, "<Item>"),
     WAVE_GTKIFE("/Edit/Combine Down", "F4", menu_combine_down, WV_MENU_ECD, "<Item>"),
     WAVE_GTKIFE("/Edit/Combine Up", "F5", menu_combine_up, WV_MENU_ECU, "<Item>"),
+    WAVE_GTKIFE("/Edit/<separator>", NULL, NULL, WV_MENU_SEP4B, "<Separator>"),
+    WAVE_GTKIFE("/Edit/Compress Time Range",
+                NULL,
+                menu_compress_time_range,
+                WV_MENU_COMPRESS,
+                "<Item>"),
+    WAVE_GTKIFE("/Edit/Uncompress All", NULL, menu_uncompress_all, WV_MENU_UNCOMPRESS, "<Item>"),
     WAVE_GTKIFE("/Edit/<separator>", NULL, NULL, WV_MENU_SEP5, "<Separator>"),
     WAVE_GTKIFE("/Edit/Data Format/Hex", "<Alt>X", menu_dataformat_hex, WV_MENU_EDFH, "<Item>"),
     WAVE_GTKIFE("/Edit/Data Format/Decimal", "<Alt>D", menu_dataformat_dec, WV_MENU_EDFD, "<Item>"),

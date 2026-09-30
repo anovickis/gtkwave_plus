@@ -5,6 +5,7 @@
 #include "gw-wave-view-private.h"
 #include "globals.h"
 #include "signal_list.h"
+#include "time_compress.h"
 #include "wavewindow.h"
 
 static GwColor XXX_get_gc_from_name(const char *str)
@@ -311,11 +312,11 @@ static void draw_hptr_trace(GwWaveView *self,
         XXX_gdk_draw_line(cr,
                           colors->grid,
                           (GLOBALS->tims.start < GLOBALS->tims.first)
-                              ? (GLOBALS->tims.first - GLOBALS->tims.start) * GLOBALS->pxns
+                              ? gw_time_to_pixel(GLOBALS->tims.first)
                               : 0,
                           liney,
                           (GLOBALS->tims.last <= GLOBALS->tims.end)
-                              ? (GLOBALS->tims.last - GLOBALS->tims.start) * GLOBALS->pxns
+                              ? gw_time_to_pixel(GLOBALS->tims.last)
                               : GLOBALS->wavewidth - 1,
                           liney);
     }
@@ -350,7 +351,7 @@ static void draw_hptr_trace(GwWaveView *self,
             if ((tim > GLOBALS->tims.end) || (tim > GLOBALS->tims.last))
                 break;
 
-            _x0 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+            _x0 = gw_time_to_pixel(tim);
             if (_x0 < -1) {
                 _x0 = -1;
             } else if (_x0 > GLOBALS->wavewidth) {
@@ -365,7 +366,7 @@ static void draw_hptr_trace(GwWaveView *self,
                 tim = GLOBALS->tims.last;
             else if (tim > GLOBALS->tims.end + 1)
                 tim = GLOBALS->tims.end + 1;
-            _x1 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+            _x1 = gw_time_to_pixel(tim);
             if (_x1 < -1) {
                 _x1 = -1;
             } else if (_x1 > GLOBALS->wavewidth) {
@@ -600,8 +601,7 @@ static void draw_hptr_trace(GwWaveView *self,
                     line_buffer_add(lines, LINE_COLOR_W, _x0, _y1, _x0 + 2, _y1 + 2);
                     line_buffer_add(lines, LINE_COLOR_W, _x0, _y1, _x0 - 2, _y1 + 2);
                 }
-                newtime = (((gdouble)(_x1 + WAVE_OPT_SKIP)) * GLOBALS->nspx) +
-                          GLOBALS->tims.start /*+GLOBALS->shift_timebase*/; /* skip to next pixel */
+                newtime = gw_pixel_to_time((gdouble)(_x1 + WAVE_OPT_SKIP)); /* skip to next pixel */
                 h3 = bsearch_node(t->n.nd, newtime);
                 if (h3->time > h->time) {
                     h = h3;
@@ -739,7 +739,7 @@ static void draw_hptr_trace_vector_analog(GwWaveView *self,
             if (tim > GLOBALS->tims.last)
                 break;
 
-            _x0 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+            _x0 = gw_time_to_pixel(tim);
             if ((_x0 > GLOBALS->wavewidth) && (endcnt == 2)) {
                 break;
             }
@@ -791,7 +791,7 @@ static void draw_hptr_trace_vector_analog(GwWaveView *self,
     }
 
     if (GLOBALS->tims.last - GLOBALS->tims.start < GLOBALS->wavewidth) {
-        rmargin = (GLOBALS->tims.last - GLOBALS->tims.start) * GLOBALS->pxns;
+        rmargin = gw_time_to_pixel(GLOBALS->tims.last);
     } else {
         rmargin = GLOBALS->wavewidth;
     }
@@ -805,7 +805,7 @@ static void draw_hptr_trace_vector_analog(GwWaveView *self,
         if ((tim > GLOBALS->tims.end) || (tim > GLOBALS->tims.last))
             break;
 
-        _x0 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x0 = gw_time_to_pixel(tim);
 
         /*
         if(_x0<-1)
@@ -826,7 +826,7 @@ static void draw_hptr_trace_vector_analog(GwWaveView *self,
         if (tim > GLOBALS->tims.last)
             tim = GLOBALS->tims.last;
         /*	else if(tim>GLOBALS->tims.end+1) tim=GLOBALS->tims.end+1; */
-        _x1 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x1 = gw_time_to_pixel(tim);
 
         /*
         if(_x1<-1)
@@ -1045,8 +1045,7 @@ static void draw_hptr_trace_vector_analog(GwWaveView *self,
                 }
             }
         } else {
-            newtime = (((gdouble)(_x1 + WAVE_OPT_SKIP)) * GLOBALS->nspx) +
-                      GLOBALS->tims.start /*+GLOBALS->shift_timebase*/; /* skip to next pixel */
+            newtime = gw_pixel_to_time((gdouble)(_x1 + WAVE_OPT_SKIP)); /* skip to next pixel */
             h3 = bsearch_node(t->n.nd, newtime);
             if (h3->time > h->time) {
                 h = h3;
@@ -1114,11 +1113,11 @@ static void draw_hptr_trace_vector(GwWaveView *self,
             XXX_gdk_draw_line(cr,
                               colors->grid,
                               (GLOBALS->tims.start < GLOBALS->tims.first)
-                                  ? (GLOBALS->tims.first - GLOBALS->tims.start) * GLOBALS->pxns
+                                  ? gw_time_to_pixel(GLOBALS->tims.first)
                                   : 0,
                               liney,
                               (GLOBALS->tims.last <= GLOBALS->tims.end)
-                                  ? (GLOBALS->tims.last - GLOBALS->tims.start) * GLOBALS->pxns
+                                  ? gw_time_to_pixel(GLOBALS->tims.last)
                                   : GLOBALS->wavewidth - 1,
                               liney);
         }
@@ -1164,7 +1163,7 @@ static void draw_hptr_trace_vector(GwWaveView *self,
         if ((tim > GLOBALS->tims.end) || (tim > GLOBALS->tims.last))
             break;
 
-        _x0 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x0 = gw_time_to_pixel(tim);
         if (_x0 < -1) {
             _x0 = -1;
         } else if (_x0 > GLOBALS->wavewidth) {
@@ -1179,7 +1178,7 @@ static void draw_hptr_trace_vector(GwWaveView *self,
             tim = GLOBALS->tims.last;
         else if (tim > GLOBALS->tims.end + 1)
             tim = GLOBALS->tims.end + 1;
-        _x1 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x1 = gw_time_to_pixel(tim);
         if (_x1 < -1) {
             _x1 = -1;
         } else if (_x1 > GLOBALS->wavewidth) {
@@ -1403,8 +1402,7 @@ static void draw_hptr_trace_vector(GwWaveView *self,
                 }
             }
         } else {
-            newtime = (((gdouble)(_x1 + WAVE_OPT_SKIP)) * GLOBALS->nspx) +
-                      GLOBALS->tims.start /*+GLOBALS->shift_timebase*/; /* skip to next pixel */
+            newtime = gw_pixel_to_time((gdouble)(_x1 + WAVE_OPT_SKIP)); /* skip to next pixel */
             h3 = bsearch_node(t->n.nd, newtime);
             if (h3->time > h->time) {
                 h = h3;
@@ -1538,7 +1536,7 @@ static void draw_vptr_trace_analog(GwWaveView *self,
             if (tim > GLOBALS->tims.last)
                 break;
 
-            _x0 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+            _x0 = gw_time_to_pixel(tim);
             if ((_x0 > GLOBALS->wavewidth) && (endcnt == 2)) {
                 break;
             }
@@ -1581,7 +1579,7 @@ static void draw_vptr_trace_analog(GwWaveView *self,
     }
 
     if (GLOBALS->tims.last - GLOBALS->tims.start < GLOBALS->wavewidth) {
-        rmargin = (GLOBALS->tims.last - GLOBALS->tims.start) * GLOBALS->pxns;
+        rmargin = gw_time_to_pixel(GLOBALS->tims.last);
     } else {
         rmargin = GLOBALS->wavewidth;
     }
@@ -1594,7 +1592,7 @@ static void draw_vptr_trace_analog(GwWaveView *self,
         if ((tim > GLOBALS->tims.end) || (tim > GLOBALS->tims.last))
             break;
 
-        _x0 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x0 = gw_time_to_pixel(tim);
 
         /*
         if(_x0<-1)
@@ -1615,7 +1613,7 @@ static void draw_vptr_trace_analog(GwWaveView *self,
         if (tim > GLOBALS->tims.last)
             tim = GLOBALS->tims.last;
         /*	else if(tim>GLOBALS->tims.end+1) tim=GLOBALS->tims.end+1; */
-        _x1 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x1 = gw_time_to_pixel(tim);
 
         /*
         if(_x1<-1)
@@ -1816,8 +1814,7 @@ static void draw_vptr_trace_analog(GwWaveView *self,
                 }
             }
         } else {
-            newtime = (((gdouble)(_x1 + WAVE_OPT_SKIP)) * GLOBALS->nspx) +
-                      GLOBALS->tims.start /*+GLOBALS->shift_timebase*/; /* skip to next pixel */
+            newtime = gw_pixel_to_time((gdouble)(_x1 + WAVE_OPT_SKIP)); /* skip to next pixel */
             h3 = bsearch_vector(t->n.vec, newtime);
             if (h3->time > h->time) {
                 h = h3;
@@ -1891,11 +1888,11 @@ static void draw_vptr_trace(GwWaveView *self,
             XXX_gdk_draw_line(cr,
                               colors->grid,
                               (GLOBALS->tims.start < GLOBALS->tims.first)
-                                  ? (GLOBALS->tims.first - GLOBALS->tims.start) * GLOBALS->pxns
+                                  ? gw_time_to_pixel(GLOBALS->tims.first)
                                   : 0,
                               liney,
                               (GLOBALS->tims.last <= GLOBALS->tims.end)
-                                  ? (GLOBALS->tims.last - GLOBALS->tims.start) * GLOBALS->pxns
+                                  ? gw_time_to_pixel(GLOBALS->tims.last)
                                   : GLOBALS->wavewidth - 1,
                               liney);
         }
@@ -1954,7 +1951,7 @@ static void draw_vptr_trace(GwWaveView *self,
         if ((tim > GLOBALS->tims.end) || (tim > GLOBALS->tims.last))
             break;
 
-        _x0 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x0 = gw_time_to_pixel(tim);
         if (_x0 < -1) {
             _x0 = -1;
         } else if (_x0 > GLOBALS->wavewidth) {
@@ -1969,7 +1966,7 @@ static void draw_vptr_trace(GwWaveView *self,
             tim = GLOBALS->tims.last;
         else if (tim > GLOBALS->tims.end + 1)
             tim = GLOBALS->tims.end + 1;
-        _x1 = (tim - GLOBALS->tims.start) * GLOBALS->pxns;
+        _x1 = gw_time_to_pixel(tim);
         if (_x1 < -1) {
             _x1 = -1;
         } else if (_x1 > GLOBALS->wavewidth) {
@@ -2153,8 +2150,7 @@ static void draw_vptr_trace(GwWaveView *self,
                 }
             }
         } else {
-            newtime = (((gdouble)(_x1 + WAVE_OPT_SKIP)) * GLOBALS->nspx) +
-                      GLOBALS->tims.start /*+GLOBALS->shift_timebase*/; /* skip to next pixel */
+            newtime = gw_pixel_to_time((gdouble)(_x1 + WAVE_OPT_SKIP)); /* skip to next pixel */
             h3 = bsearch_vector(t->n.vec, newtime);
             if (h3->time > h->time) {
                 h = h3;

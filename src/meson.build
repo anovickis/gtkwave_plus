@@ -67,6 +67,7 @@ gtkwave_sources = [
     'status.c',
     'strace.c',
     'symbol.c',
+    'time_compress.c',
     'tcl_helper.c',
     'timeentry.c',
     'translate.c',

@@ -4,6 +4,7 @@
 #include "gw-wave-view-private.h"
 #include "gw-wave-view-traces.h"
 #include "globals.h"
+#include "time_compress.h"
 #include "wavewindow.h"
 
 G_DEFINE_TYPE(GwWaveView, gw_wave_view, GTK_TYPE_DRAWING_AREA)
@@ -95,7 +96,6 @@ static void draw_marker(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
 {
     (void)self;
 
-    gdouble pixstep;
     gint xl;
 
     cairo_set_line_width(cr, GLOBALS->cr_line_width);
@@ -112,8 +112,7 @@ static void draw_marker(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
         GwTime baseline_pos = gw_marker_get_position(baseline_marker);
         if (baseline_pos >= GLOBALS->tims.start && baseline_pos <= GLOBALS->tims.last &&
             baseline_pos <= GLOBALS->tims.end) {
-            pixstep = ((gdouble)GLOBALS->nsperframe) / ((gdouble)GLOBALS->pixelsperframe);
-            xl = ((gdouble)(baseline_pos - GLOBALS->tims.start)) / pixstep; /* snap to integer */
+            xl = gw_time_to_pixel(baseline_pos); /* snap to integer */
             if ((xl >= 0) && (xl < GLOBALS->wavewidth)) {
                 XXX_gdk_draw_line(cr,
                                   colors->marker_baseline,
@@ -129,8 +128,7 @@ static void draw_marker(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
         GwTime primary_pos = gw_marker_get_position(primary_marker);
         if (primary_pos >= GLOBALS->tims.start && primary_pos <= GLOBALS->tims.last &&
             primary_pos <= GLOBALS->tims.end) {
-            pixstep = ((gdouble)GLOBALS->nsperframe) / ((gdouble)GLOBALS->pixelsperframe);
-            xl = ((gdouble)(primary_pos - GLOBALS->tims.start)) / pixstep; /* snap to integer */
+            xl = gw_time_to_pixel(primary_pos); /* snap to integer */
             if ((xl >= 0) && (xl < GLOBALS->wavewidth)) {
                 XXX_gdk_draw_line(cr,
                                   colors->marker_primary,
@@ -148,8 +146,7 @@ static void draw_marker(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
         GwTime ghost_pos = gw_marker_get_position(ghost_marker);
         if ((ghost_pos >= GLOBALS->tims.start) && (ghost_pos <= GLOBALS->tims.last) &&
             (ghost_pos <= GLOBALS->tims.end)) {
-            pixstep = ((gdouble)GLOBALS->nsperframe) / ((gdouble)GLOBALS->pixelsperframe);
-            xl = ((gdouble)(ghost_pos - GLOBALS->tims.start)) / pixstep; /* snap to integer */
+            xl = gw_time_to_pixel(ghost_pos); /* snap to integer */
             if ((xl >= 0) && (xl < GLOBALS->wavewidth)) {
                 XXX_gdk_draw_line(cr,
                                   colors->marker_primary,
@@ -216,7 +213,7 @@ static void renderhash(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors, 
     if (tim == GLOBALS->tims.last)
         return;
 
-    rborder = (GLOBALS->tims.last - GLOBALS->tims.start) * GLOBALS->pxns;
+    rborder = gw_time_to_pixel(GLOBALS->tims.last);
     DEBUG(printf("Rborder: %lld, Wavewidth: %d\n", rborder, GLOBALS->wavewidth));
     if (rborder > GLOBALS->wavewidth)
         rborder = GLOBALS->wavewidth;
@@ -263,7 +260,7 @@ static void rendertimes(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
 
     tim = GLOBALS->tims.start;
 
-    GLOBALS->tims.end = GLOBALS->tims.start + (((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    GLOBALS->tims.end = gw_pixel_to_time((gdouble)GLOBALS->wavewidth);
 
     /***********/
     WAVE_STRACE_ITERATOR_FWD(s_ctx_iter)
@@ -300,10 +297,9 @@ static void rendertimes(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
                     tm = *t;
                     if (tm >= GLOBALS->tims.start) {
                         if (tm <= GLOBALS->tims.end) {
-                            x = (tm - GLOBALS->tims.start) * GLOBALS->pxns;
+                            x = gw_time_to_pixel(tm);
                             if (oldx == x) {
-                                pos2 = bsearch_timechain(GLOBALS->tims.start +
-                                                         (((gdouble)(x + 1)) * GLOBALS->nspx));
+                                pos2 = bsearch_timechain(gw_pixel_to_time((gdouble)(x + 1)));
                                 if (pos2 > pos) {
                                     pos = pos2;
                                     goto top;
@@ -350,27 +346,21 @@ static void rendertimes(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
 
         for (iter_x = low_x; iter_x <= high_x; iter_x++) {
             tm = GLOBALS->ruler_step * iter_x + GLOBALS->ruler_origin;
-            x = (tm - GLOBALS->tims.start) * GLOBALS->pxns;
+            x = gw_time_to_pixel(tm);
             if (oldx == x) {
-                gdouble xd, offset, pixstep;
+                gdouble xd;
                 GwTime newcurr;
 
                 xd = x + 1; /* for pix time calc */
 
-                pixstep = ((gdouble)GLOBALS->nsperframe) / ((gdouble)GLOBALS->pixelsperframe);
-                newcurr = (GwTime)(offset = ((gdouble)GLOBALS->tims.start) + (xd * pixstep));
-
-                if (offset - newcurr > 0.5) /* round to nearest integer ns */
-                {
-                    newcurr++;
-                }
+                newcurr = gw_pixel_to_time(xd);
 
                 low_x = (newcurr - GLOBALS->ruler_origin) / GLOBALS->ruler_step;
                 if (low_x <= iter_x)
                     low_x = (iter_x + 1);
                 iter_x = low_x;
                 tm = GLOBALS->ruler_step * iter_x + GLOBALS->ruler_origin;
-                x = (tm - GLOBALS->tims.start) * GLOBALS->pxns;
+                x = gw_time_to_pixel(tm);
             }
 
             if (x >= GLOBALS->wavewidth)
@@ -460,9 +450,8 @@ static void renderblackout(GwTime start, GwTime end, gpointer user_data)
 {
     RenderBlackoutData *data = user_data;
 
-    gdouble pageinc = GLOBALS->wavewidth * GLOBALS->nspx;
     GwTime lhs = GLOBALS->tims.start;
-    GwTime rhs = pageinc + lhs;
+    GwTime rhs = GLOBALS->tims.end;
 
     if (start > rhs || end < lhs) {
         // skip out of bounds regions
@@ -480,20 +469,19 @@ static void renderblackout(GwTime start, GwTime end, gpointer user_data)
 
     if (rclip < lhs) {
         rclip = lhs;
+    } else if (rclip > rhs) {
+        rclip = rhs;
     }
 
-    lclip -= lhs;
-    rclip -= lhs;
-    if (rclip > ((GLOBALS->wavewidth + 1) * GLOBALS->nspx)) {
-        rclip = (GLOBALS->wavewidth + 1) * (GLOBALS->nspx);
-    }
+    gdouble x0 = gw_time_to_pixel(lclip);
+    gdouble x1 = gw_time_to_pixel(rclip);
 
     XXX_gdk_draw_rectangle(data->cr,
                            data->colors->fill_x,
                            TRUE,
-                           (((gdouble)lclip) * GLOBALS->pxns),
+                           x0,
                            GLOBALS->fontheight,
-                           (((gdouble)(rclip - lclip)) * GLOBALS->pxns),
+                           x1 - x0,
                            GLOBALS->waveheight - GLOBALS->fontheight);
 }
 
@@ -518,8 +506,7 @@ static void draw_named_marker(gpointer data, gpointer user_data)
         return;
     }
 
-    gdouble pixstep = GLOBALS->nsperframe / GLOBALS->pixelsperframe;
-    gint x = (t - GLOBALS->tims.start) / pixstep; /* snap to integer */
+    gint x = gw_time_to_pixel(t); /* snap to integer */
 
     if (x < 0 || x > gtk_widget_get_allocated_width(GTK_WIDGET(draw_data->widget))) {
         return;
@@ -575,6 +562,51 @@ static void draw_named_marker(gpointer data, gpointer user_data)
     // }
 }
 
+// Draws a small filled "+" marker over each currently-visible compressed
+// time span, at its mapped (fixed-width) pixel location -- the visual
+// half of "Compress Time Range": the timeline itself already renders
+// denser around these spans (gw_time_to_pixel()/gw_pixel_to_time() have
+// already collapsed them by the time any of the rest of this file runs),
+// this just makes it obvious to the user where/that a span was collapsed.
+static void draw_compressed_spans(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
+{
+    (void)self;
+
+    guint count = time_compress_span_count();
+    if (count == 0) {
+        return;
+    }
+
+    gdouble marker_w = time_compress_marker_width_px();
+
+    for (guint i = 0; i < count; i++) {
+        GwTime start, end;
+        time_compress_span_get(i, &start, &end);
+
+        if (end <= GLOBALS->tims.start || start >= GLOBALS->tims.end || start >= GLOBALS->tims.last) {
+            continue; /* not currently visible */
+        }
+
+        gdouble x0 = gw_time_to_pixel(MAX(start, GLOBALS->tims.start));
+
+        cairo_set_source_rgba(cr, colors->marker_named.r, colors->marker_named.g,
+                             colors->marker_named.b, 0.85);
+        cairo_rectangle(cr, x0, GLOBALS->fontheight, marker_w, GLOBALS->waveheight - GLOBALS->fontheight);
+        cairo_fill(cr);
+
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
+        cairo_set_line_width(cr, 1.5);
+        gdouble cx = x0 + marker_w / 2.0;
+        gdouble cy = (GLOBALS->fontheight + GLOBALS->waveheight) / 2.0;
+        gdouble arm = MIN(marker_w, GLOBALS->waveheight - GLOBALS->fontheight) / 3.0;
+        cairo_move_to(cr, cx - arm, cy);
+        cairo_line_to(cr, cx + arm, cy);
+        cairo_move_to(cr, cx, cy - arm);
+        cairo_line_to(cr, cx, cy + arm);
+        cairo_stroke(cr);
+    }
+}
+
 static void draw_named_markers(GwWaveView *self, cairo_t *cr, GwWaveformColors *colors)
 {
     (void)self;
@@ -626,7 +658,7 @@ static gboolean gw_wave_view_draw(GtkWidget *widget, cairo_t *cr)
     if (self->dirty) {
         // GTimer *timer = g_timer_new();
 
-        GLOBALS->tims.end = GLOBALS->tims.start + GLOBALS->nspx * GLOBALS->wavewidth;
+        GLOBALS->tims.end = gw_pixel_to_time((gdouble)GLOBALS->wavewidth);
 
         cairo_t *traces_cr = cairo_create(self->traces_surface);
 
@@ -674,6 +706,7 @@ static gboolean gw_wave_view_draw(GtkWidget *widget, cairo_t *cr)
 
     draw_marker(self, cr, colors);
     draw_named_markers(self, cr, colors);
+    draw_compressed_spans(self, cr, colors);
 
     /* seems to cause a conflict flipping back so don't! */
     /* set_GLOBALS(g_old); */
