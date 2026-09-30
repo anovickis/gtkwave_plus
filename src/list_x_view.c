@@ -161,21 +161,75 @@ static GPtrArray *scan_all_traces(gboolean *truncated)
     GPtrArray *out = g_ptr_array_new_with_free_func(list_x_entry_free);
     *truncated = FALSE;
 
+    // Pass 1: auto-coalesced constructed vectors currently on display.
+    // These are synthesized purely at display time from several
+    // separately-declared 1-bit signals (see scan_vector_trace's comment
+    // above), so they have no single corresponding GwFacs symbol entry --
+    // the whole-hierarchy scan in pass 2 below can't see them at all.
     for (GwTrace *t = GLOBALS->traces.first; t != NULL; t = t->t_next) {
-        if (!HasWave(t) || t->name == NULL) {
+        if (!HasWave(t) || t->name == NULL || !t->vector) {
             continue;
         }
 
-        if (t->vector) {
-            scan_vector_trace(t, out, truncated);
-        } else {
-            scan_node_trace(t, out, truncated);
+        scan_vector_trace(t, out, truncated);
+        if (*truncated) {
+            return out;
+        }
+    }
+
+    // Pass 2: every real signal in the whole loaded design, not just what's
+    // currently displayed -- this is the actual point of List X. Requiring
+    // a signal to already be suspected *and* displayed before it can be
+    // found defeats the purpose of the search. GwFacs is the flat,
+    // complete symbol table gtkwave builds at load time; src/tcl_helper.c
+    // and src/treesearch.c already do unconditional full scans over it the
+    // same way.
+    GwFacs *facs = gw_dump_file_get_facs(GLOBALS->dump_file);
+    guint num_facs = gw_facs_get_length(facs);
+
+    // VCD identifier-code aliasing can give two distinct hierarchical
+    // names the exact same underlying GwNode; skip re-scanning a node
+    // we've already covered under another name.
+    GHashTable *seen_nodes = g_hash_table_new(g_direct_hash, g_direct_equal);
+
+    for (guint i = 0; i < num_facs; i++) {
+        GwSymbol *sym = gw_facs_get(facs, i);
+        if (sym == NULL || sym->n == NULL || sym->name == NULL) {
+            continue;
+        }
+        if (g_hash_table_contains(seen_nodes, sym->n)) {
+            continue;
+        }
+        g_hash_table_add(seen_nodes, sym->n);
+
+        // A node that was never displayed keeps its history in its
+        // packed/compressed on-load form (mv.mvlfac set, head/next chain
+        // not yet built) -- src/analyzer.c's AddNodeTraceReturn() only
+        // unpacks it the first time a node becomes a real, visible trace.
+        // Do the same here, since this is exactly the point of a
+        // whole-hierarchy scan: signals nobody has displayed yet.
+        if (sym->n->mv.mvlfac) {
+            import_trace(sym->n);
         }
 
+        // A raw GwFacs symbol is never an auto-coalesced GwBitVector --
+        // that's purely a display-time construct -- so scan_node_trace()
+        // is always the right path here. Build a throwaway GwTrace the
+        // same way src/signal_value_lookup.c's signal_value_at_time()
+        // does to reuse that scan logic unchanged.
+        GwTrace temp;
+        memset(&temp, 0, sizeof(GwTrace));
+        temp.name = sym->name;
+        temp.name_full = sym->name;
+        temp.n.nd = sym->n;
+
+        scan_node_trace(&temp, out, truncated);
         if (*truncated) {
             break;
         }
     }
+
+    g_hash_table_destroy(seen_nodes);
 
     return out;
 }
@@ -288,11 +342,9 @@ void list_x_show(void)
     gtk_container_add(GTK_CONTAINER(window), vbox);
 
     gchar *summary_text = g_strdup_printf(
-        "%u X-like interval%s found across %u displayed trace%s.%s",
+        "%u X-like interval%s found across the whole design hierarchy.%s",
         entries->len,
         entries->len == 1 ? "" : "s",
-        GLOBALS->traces.total,
-        GLOBALS->traces.total == 1 ? "" : "s",
         truncated ? " (truncated -- more may exist)" : "");
     GtkWidget *summary_label = gtk_label_new(summary_text);
     g_free(summary_text);
@@ -314,7 +366,7 @@ void list_x_show(void)
 
     if (entries->len == 0) {
         GtkWidget *empty_label =
-            gtk_label_new("No X-like values found in any currently displayed trace.");
+            gtk_label_new("No X-like values found anywhere in the design hierarchy.");
         gtk_widget_set_margin_start(empty_label, 8);
         gtk_widget_set_margin_end(empty_label, 8);
         gtk_widget_set_margin_top(empty_label, 8);
