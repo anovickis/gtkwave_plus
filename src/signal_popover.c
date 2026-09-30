@@ -127,10 +127,43 @@ static void close_ancestor_popover(GtkWidget *widget)
     }
 }
 
+// True for either representation a multi-bit signal can have in this
+// codebase -- a real constructed/auto-coalesced vector (GwBitVector) or,
+// far more commonly, a natively-declared multi-bit VCD var (a GwNode with
+// extvals set) -- same split src/list_x_view.c's scan and src/bus_ops.c's
+// slicing both needed. Gates whether the bit-range entry below is shown
+// at all (a scalar signal has no range to narrow).
+static gboolean trace_is_bus(GwTrace *t)
+{
+    if (t == NULL) {
+        return FALSE;
+    }
+    if (t->vector) {
+        return TRUE;
+    }
+    return t->n.nd != NULL && t->n.nd->extvals;
+}
+
+// The netlist-query backend (GwNetlistQuery -> slang-netlist) has always
+// accepted a bit-range-suffixed signal_path (e.g. "count_q[3:0]") -- that
+// part needed no code change. What was missing was a UI entry point: the
+// popover only ever passed the whole-signal name_full through. When
+// `range_entry` holds non-empty text, appends it as "[text]"; otherwise
+// (including when there's no range_entry at all, i.e. a scalar target)
+// behaves exactly as before.
+static gchar *build_query_signal_path(GwTrace *t, GtkEntry *range_entry)
+{
+    if (range_entry != NULL) {
+        const gchar *range_text = gtk_entry_get_text(range_entry);
+        if (range_text != NULL && range_text[0] != '\0') {
+            return g_strdup_printf("%s[%s]", t->name_full, range_text);
+        }
+    }
+    return g_strdup(t->name_full);
+}
+
 static void on_show_drivers_clicked(GtkButton *button, gpointer user_data)
 {
-    (void)user_data;
-
     GwTrace *t = find_target_trace();
     close_ancestor_popover(GTK_WIDGET(button));
 
@@ -138,13 +171,13 @@ static void on_show_drivers_clicked(GtkButton *button, gpointer user_data)
         status_text("GTKWAVE | Select a signal first to show its drivers.\n");
         return;
     }
-    netlist_query_show_drivers(t->name_full);
+    gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
+    netlist_query_show_drivers(signal_path);
+    g_free(signal_path);
 }
 
 static void on_show_loads_clicked(GtkButton *button, gpointer user_data)
 {
-    (void)user_data;
-
     GwTrace *t = find_target_trace();
     close_ancestor_popover(GTK_WIDGET(button));
 
@@ -152,13 +185,13 @@ static void on_show_loads_clicked(GtkButton *button, gpointer user_data)
         status_text("GTKWAVE | Select a signal first to show its loads.\n");
         return;
     }
-    netlist_query_show_loads(t->name_full);
+    gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
+    netlist_query_show_loads(signal_path);
+    g_free(signal_path);
 }
 
 static void on_show_cone_clicked(GtkButton *button, gpointer user_data)
 {
-    (void)user_data;
-
     GwTrace *t = find_target_trace();
     close_ancestor_popover(GTK_WIDGET(button));
 
@@ -166,13 +199,13 @@ static void on_show_cone_clicked(GtkButton *button, gpointer user_data)
         status_text("GTKWAVE | Select a signal first to show its cone of logic.\n");
         return;
     }
-    netlist_query_show_cone(t->name_full);
+    gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
+    netlist_query_show_cone(signal_path);
+    g_free(signal_path);
 }
 
 static void on_show_schematic_clicked(GtkButton *button, gpointer user_data)
 {
-    (void)user_data;
-
     GwTrace *t = find_target_trace();
     close_ancestor_popover(GTK_WIDGET(button));
 
@@ -180,7 +213,9 @@ static void on_show_schematic_clicked(GtkButton *button, gpointer user_data)
         status_text("GTKWAVE | Select a signal first to show its schematic.\n");
         return;
     }
-    netlist_query_show_schematic(t->name_full);
+    gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
+    netlist_query_show_schematic(signal_path);
+    g_free(signal_path);
 }
 
 static void on_show_gate_schematic_clicked(GtkButton *button, gpointer user_data)
@@ -281,22 +316,41 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
 
     gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
 
+    // Bit-range entry for the netlist queries below -- the backend
+    // (GwNetlistQuery -> slang-netlist) has always accepted a
+    // bit-range-suffixed signal_path; this is the missing UI entry point,
+    // so only worth showing at all for a bus/multi-bit target.
+    GtkWidget *range_entry = NULL;
+    if (trace_is_bus(find_target_trace())) {
+        GtkWidget *range_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+        gtk_box_pack_start(GTK_BOX(range_box), gtk_label_new("Bit range:"), FALSE, FALSE, 0);
+        range_entry = gtk_entry_new();
+        gtk_entry_set_placeholder_text(GTK_ENTRY(range_entry), "e.g. 3:1 (whole signal if empty)");
+        gtk_widget_set_tooltip_text(
+            range_entry,
+            "Optional bit range to narrow the queries below to, e.g. \"3:1\" for bits 3 "
+            "down to 1. Leave empty to query the whole signal.");
+        gtk_box_pack_start(GTK_BOX(range_box), range_entry, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(box), range_box, FALSE, FALSE, 0);
+    }
+
     GtkWidget *netlist_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
 
     GtkWidget *drivers_button = gtk_button_new_with_label("Show Drivers");
-    g_signal_connect(drivers_button, "clicked", G_CALLBACK(on_show_drivers_clicked), NULL);
+    g_signal_connect(drivers_button, "clicked", G_CALLBACK(on_show_drivers_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), drivers_button, TRUE, TRUE, 0);
 
     GtkWidget *loads_button = gtk_button_new_with_label("Show Loads");
-    g_signal_connect(loads_button, "clicked", G_CALLBACK(on_show_loads_clicked), NULL);
+    g_signal_connect(loads_button, "clicked", G_CALLBACK(on_show_loads_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), loads_button, TRUE, TRUE, 0);
 
     GtkWidget *cone_button = gtk_button_new_with_label("Show Cone of Logic");
-    g_signal_connect(cone_button, "clicked", G_CALLBACK(on_show_cone_clicked), NULL);
+    g_signal_connect(cone_button, "clicked", G_CALLBACK(on_show_cone_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), cone_button, TRUE, TRUE, 0);
 
     GtkWidget *schematic_button = gtk_button_new_with_label("Show Schematic");
-    g_signal_connect(schematic_button, "clicked", G_CALLBACK(on_show_schematic_clicked), NULL);
+    g_signal_connect(
+        schematic_button, "clicked", G_CALLBACK(on_show_schematic_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), schematic_button, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), netlist_box, FALSE, FALSE, 0);
