@@ -9,6 +9,7 @@
 #include "globals.h"
 #include "gw-color.h"
 #include "menu.h"
+#include "bus_ops.h"
 #include "gate_schematic_view.h"
 #include "netlist_query_ui.h"
 #include "schematic_view.h"
@@ -204,6 +205,24 @@ static void on_show_event_report_clicked(GtkButton *button, gpointer user_data)
     signal_event_report_show();
 }
 
+static void on_expand_subbus_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    close_ancestor_popover(GTK_WIDGET(button));
+    bus_ops_show_expand_subbus_dialog(t);
+}
+
+static void on_reverse_bit_order_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    close_ancestor_popover(GTK_WIDGET(button));
+    bus_ops_reverse_bit_order(t);
+}
+
 static void add_section_label(GtkWidget *box, const char *text)
 {
     gchar *markup = g_markup_printf_escaped("<b>%s</b>", text);
@@ -291,6 +310,45 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     g_signal_connect(
         event_report_button, "clicked", G_CALLBACK(on_show_event_report_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(box), event_report_button, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
+
+    add_section_label(box, "Bus Operations");
+
+    GtkWidget *combine_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+
+    GtkWidget *combine_down_button = gtk_button_new_with_label("Create Bus (Down)");
+    g_signal_connect(combine_down_button,
+                     "clicked",
+                     G_CALLBACK(on_action_button_clicked),
+                     (gpointer)(MenuAction)menu_combine_down);
+    gtk_box_pack_start(GTK_BOX(combine_box), combine_down_button, TRUE, TRUE, 0);
+
+    GtkWidget *combine_up_button = gtk_button_new_with_label("Create Bus (Up)");
+    g_signal_connect(combine_up_button,
+                     "clicked",
+                     G_CALLBACK(on_action_button_clicked),
+                     (gpointer)(MenuAction)menu_combine_up);
+    gtk_box_pack_start(GTK_BOX(combine_box), combine_up_button, TRUE, TRUE, 0);
+
+    gtk_box_pack_start(GTK_BOX(box), combine_box, FALSE, FALSE, 0);
+    gtk_widget_set_tooltip_text(
+        combine_box, "Combine the currently-highlighted signals into one bus (same as the "
+                    "existing F4/F5 shortcuts)");
+
+    GtkWidget *bus_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+
+    GtkWidget *subbus_button = gtk_button_new_with_label("Expand as Sub-Bus\xe2\x80\xa6");
+    g_signal_connect(subbus_button, "clicked", G_CALLBACK(on_expand_subbus_clicked), NULL);
+    gtk_widget_set_tooltip_text(subbus_button,
+                               "Slice a bit range out of this bus into its own new bus");
+    gtk_box_pack_start(GTK_BOX(bus_box), subbus_button, TRUE, TRUE, 0);
+
+    GtkWidget *reverse_button = gtk_button_new_with_label("Reverse Bit Order");
+    g_signal_connect(reverse_button, "clicked", G_CALLBACK(on_reverse_bit_order_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(bus_box), reverse_button, TRUE, TRUE, 0);
+
+    gtk_box_pack_start(GTK_BOX(box), bus_box, FALSE, FALSE, 0);
 
     gtk_container_add(GTK_CONTAINER(popover), box);
     gtk_widget_show_all(box);

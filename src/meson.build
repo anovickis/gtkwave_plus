@@ -13,6 +13,7 @@ gtkwave_sources = [
     'baseconvert.c',
     'bitvec.c',
     'bsearch.c',
+    'bus_ops.c',
     'busy.c',
     'clipping.c',
     'console_panel.c',
