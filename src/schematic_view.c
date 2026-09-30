@@ -48,9 +48,15 @@ static void schematic_node_info_free(gpointer data)
 typedef struct
 {
     GtkWidget *image;
+    GtkWidget *scrolled; /* for measuring available viewport size on "Zoom to Fit" */
     gulong marker_handler_id;
     gchar *signal_path;
     GPtrArray *nodes; /* SchematicNodeInfo*, current layout; rebuilt on refresh */
+    GdkPixbuf *original_pixbuf; /* most recent render at 1.0 zoom (SCHEMATIC_DPI); the
+                                 displayed image is this, rescaled by `zoom` */
+    gdouble zoom; /* 1.0 = original size; click coordinates are divided by
+                  this before hit-testing against `nodes`, which are always
+                  in original (1.0 zoom) pixel space */
 } SchematicState;
 
 static void schematic_state_free(gpointer data)
@@ -63,8 +69,68 @@ static void schematic_state_free(gpointer data)
     if (state->nodes != NULL) {
         g_ptr_array_unref(state->nodes);
     }
+    if (state->original_pixbuf != NULL) {
+        g_object_unref(state->original_pixbuf);
+    }
     g_free(state->signal_path);
     g_free(state);
+}
+
+#define SCHEMATIC_ZOOM_MIN 0.1
+#define SCHEMATIC_ZOOM_MAX 8.0
+
+// Rescales state->original_pixbuf by state->zoom and sets it on the
+// GtkImage -- the single place both "a new render just came in" and "the
+// zoom level changed" funnel through, so the two always stay consistent.
+static void apply_zoom(SchematicState *state)
+{
+    if (state->original_pixbuf == NULL) {
+        return;
+    }
+
+    gint orig_w = gdk_pixbuf_get_width(state->original_pixbuf);
+    gint orig_h = gdk_pixbuf_get_height(state->original_pixbuf);
+    gint new_w = MAX(1, (gint)(orig_w * state->zoom));
+    gint new_h = MAX(1, (gint)(orig_h * state->zoom));
+
+    if (state->zoom == 1.0) {
+        gtk_image_set_from_pixbuf(GTK_IMAGE(state->image), state->original_pixbuf);
+        return;
+    }
+
+    GdkPixbuf *scaled =
+        gdk_pixbuf_scale_simple(state->original_pixbuf, new_w, new_h, GDK_INTERP_BILINEAR);
+    if (scaled != NULL) {
+        gtk_image_set_from_pixbuf(GTK_IMAGE(state->image), scaled);
+        g_object_unref(scaled);
+    }
+}
+
+static void set_zoom(SchematicState *state, gdouble new_zoom)
+{
+    state->zoom = CLAMP(new_zoom, SCHEMATIC_ZOOM_MIN, SCHEMATIC_ZOOM_MAX);
+    apply_zoom(state);
+}
+
+static void zoom_to_fit(SchematicState *state)
+{
+    if (state->original_pixbuf == NULL || state->scrolled == NULL) {
+        return;
+    }
+
+    gint avail_w = gtk_widget_get_allocated_width(state->scrolled);
+    gint avail_h = gtk_widget_get_allocated_height(state->scrolled);
+    gint orig_w = gdk_pixbuf_get_width(state->original_pixbuf);
+    gint orig_h = gdk_pixbuf_get_height(state->original_pixbuf);
+    if (avail_w <= 1 || avail_h <= 1 || orig_w <= 0 || orig_h <= 0) {
+        return;
+    }
+
+    // A little margin so the fitted image isn't flush against the
+    // scrollbars/edges.
+    gdouble scale_w = (gdouble)(avail_w - 4) / (gdouble)orig_w;
+    gdouble scale_h = (gdouble)(avail_h - 4) / (gdouble)orig_h;
+    set_zoom(state, MIN(scale_w, scale_h));
 }
 
 // slang-netlist's DOT node labels are its own generic descriptions, e.g.
@@ -640,7 +706,11 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
     (void)widget;
     SchematicState *state = user_data;
 
-    SchematicNodeInfo *node = find_node_at(state->nodes, event->x, event->y);
+    // `nodes` bounding boxes are always in original (1.0 zoom) pixel
+    // space; the click coordinates are in whatever the image is currently
+    // displayed at, so undo the zoom before hit-testing.
+    gdouble zoom = state->zoom != 0.0 ? state->zoom : 1.0;
+    SchematicNodeInfo *node = find_node_at(state->nodes, event->x / zoom, event->y / zoom);
     if (node == NULL) {
         return FALSE;
     }
@@ -792,8 +862,11 @@ static void refresh_schematic(SchematicState *state)
         return;
     }
 
-    gtk_image_set_from_pixbuf(GTK_IMAGE(state->image), pixbuf);
-    g_object_unref(pixbuf);
+    if (state->original_pixbuf != NULL) {
+        g_object_unref(state->original_pixbuf);
+    }
+    state->original_pixbuf = pixbuf; /* state now owns this reference */
+    apply_zoom(state); /* re-render at whatever zoom is already in effect */
 
     if (state->nodes != NULL) {
         g_ptr_array_unref(state->nodes);
@@ -837,6 +910,48 @@ static void on_next_transition_clicked(GtkButton *button, gpointer user_data)
     step_transition((SchematicState *)user_data, TRUE);
 }
 
+static void on_zoom_in_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    SchematicState *state = user_data;
+    set_zoom(state, state->zoom * 1.25);
+}
+
+static void on_zoom_out_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    SchematicState *state = user_data;
+    set_zoom(state, state->zoom / 1.25);
+}
+
+static void on_zoom_fit_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    zoom_to_fit((SchematicState *)user_data);
+}
+
+static void on_zoom_100_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    set_zoom((SchematicState *)user_data, 1.0);
+}
+
+// One-shot: fires on the scrolled window's first real size-allocate (at
+// construction time it hasn't been realized yet, so fitting to it right
+// away would just measure a 0x0/default area), then immediately
+// disconnects itself -- later refreshes (marker moves) preserve whatever
+// zoom the user has since chosen, they don't keep re-fitting. Tied to the
+// widget's own signal (rather than e.g. a g_idle_add()) so it can't
+// outlive/dangle past the window being closed.
+static void on_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAllocation *allocation,
+                                              gpointer user_data)
+{
+    (void)allocation;
+    zoom_to_fit((SchematicState *)user_data);
+    g_signal_handlers_disconnect_by_func(widget, (gpointer)on_scrolled_size_allocate_fit_once,
+                                         user_data);
+}
+
 void netlist_query_show_schematic(const char *signal_path)
 {
     GtkWindow *parent = GLOBALS->mainwindow != NULL && GTK_IS_WINDOW(GLOBALS->mainwindow)
@@ -872,15 +987,37 @@ void netlist_query_show_schematic(const char *signal_path)
                     "schematic");
     gtk_box_pack_start(GTK_BOX(toolbar), next_button, FALSE, FALSE, 0);
 
+    GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(toolbar), sep, FALSE, FALSE, 4);
+
+    GtkWidget *zoom_out_button = gtk_button_new_with_label("\xe2\x88\x92"); /* minus sign */
+    gtk_widget_set_tooltip_text(zoom_out_button, "Zoom Out");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_out_button, FALSE, FALSE, 0);
+
+    GtkWidget *zoom_in_button = gtk_button_new_with_label("+");
+    gtk_widget_set_tooltip_text(zoom_in_button, "Zoom In");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_in_button, FALSE, FALSE, 0);
+
+    GtkWidget *zoom_fit_button = gtk_button_new_with_label("Zoom to Fit");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_fit_button, FALSE, FALSE, 0);
+
+    GtkWidget *zoom_100_button = gtk_button_new_with_label("1:1");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_100_button, FALSE, FALSE, 0);
+
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
 
     // The event box exists purely to receive button-press-event -- a
     // plain GtkImage doesn't have its own GdkWindow to route input
-    // through, and (since it exactly fits its one natural-size child)
-    // introduces no coordinate offset between click position and the
-    // underlying pixbuf's own pixel space.
+    // through. Centered (rather than the GtkScrolledWindow/GtkViewport
+    // default of anchoring a smaller-than-viewport child at the top-left
+    // corner) so a small diagram doesn't look stranded in a corner of a
+    // much bigger window -- doesn't affect click coordinates, which GDK
+    // already reports relative to the event box's own allocated origin
+    // regardless of where that origin ends up.
     GtkWidget *event_box = gtk_event_box_new();
+    gtk_widget_set_halign(event_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(event_box, GTK_ALIGN_CENTER);
     gtk_container_add(GTK_CONTAINER(scrolled), event_box);
 
     GtkWidget *image = gtk_image_new();
@@ -888,6 +1025,8 @@ void netlist_query_show_schematic(const char *signal_path)
 
     SchematicState *state = g_new0(SchematicState, 1);
     state->image = image;
+    state->scrolled = scrolled;
+    state->zoom = 1.0;
     state->signal_path = g_strdup(signal_path);
     state->marker_handler_id =
         g_signal_connect(GLOBALS->project, "unnamed-marker-changed",
@@ -895,11 +1034,18 @@ void netlist_query_show_schematic(const char *signal_path)
 
     g_signal_connect(prev_button, "clicked", G_CALLBACK(on_prev_transition_clicked), state);
     g_signal_connect(next_button, "clicked", G_CALLBACK(on_next_transition_clicked), state);
+    g_signal_connect(zoom_in_button, "clicked", G_CALLBACK(on_zoom_in_clicked), state);
+    g_signal_connect(zoom_out_button, "clicked", G_CALLBACK(on_zoom_out_clicked), state);
+    g_signal_connect(zoom_fit_button, "clicked", G_CALLBACK(on_zoom_fit_clicked), state);
+    g_signal_connect(zoom_100_button, "clicked", G_CALLBACK(on_zoom_100_clicked), state);
 
     g_object_set_data_full(G_OBJECT(window), "schematic-state", state, schematic_state_free);
 
     gtk_widget_add_events(event_box, GDK_BUTTON_PRESS_MASK);
     g_signal_connect(event_box, "button-press-event", G_CALLBACK(on_image_button_press), state);
+
+    g_signal_connect(scrolled, "size-allocate", G_CALLBACK(on_scrolled_size_allocate_fit_once),
+                     state);
 
     refresh_schematic(state);
 

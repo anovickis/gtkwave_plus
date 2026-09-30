@@ -171,6 +171,109 @@ static gboolean render_svg_to_png(const gchar *svg_path, gchar **out_png_path, G
     return TRUE;
 }
 
+typedef struct
+{
+    GtkWidget *image;
+    GtkWidget *scrolled;
+    GdkPixbuf *original_pixbuf;
+    gdouble zoom;
+} GateSchematicState;
+
+static void gate_schematic_state_free(gpointer data)
+{
+    GateSchematicState *state = data;
+    if (state->original_pixbuf != NULL) {
+        g_object_unref(state->original_pixbuf);
+    }
+    g_free(state);
+}
+
+#define GATE_SCHEMATIC_ZOOM_MIN 0.1
+#define GATE_SCHEMATIC_ZOOM_MAX 8.0
+
+static void gate_apply_zoom(GateSchematicState *state)
+{
+    if (state->original_pixbuf == NULL) {
+        return;
+    }
+    if (state->zoom == 1.0) {
+        gtk_image_set_from_pixbuf(GTK_IMAGE(state->image), state->original_pixbuf);
+        return;
+    }
+
+    gint orig_w = gdk_pixbuf_get_width(state->original_pixbuf);
+    gint orig_h = gdk_pixbuf_get_height(state->original_pixbuf);
+    gint new_w = MAX(1, (gint)(orig_w * state->zoom));
+    gint new_h = MAX(1, (gint)(orig_h * state->zoom));
+
+    GdkPixbuf *scaled =
+        gdk_pixbuf_scale_simple(state->original_pixbuf, new_w, new_h, GDK_INTERP_BILINEAR);
+    if (scaled != NULL) {
+        gtk_image_set_from_pixbuf(GTK_IMAGE(state->image), scaled);
+        g_object_unref(scaled);
+    }
+}
+
+static void gate_set_zoom(GateSchematicState *state, gdouble new_zoom)
+{
+    state->zoom = CLAMP(new_zoom, GATE_SCHEMATIC_ZOOM_MIN, GATE_SCHEMATIC_ZOOM_MAX);
+    gate_apply_zoom(state);
+}
+
+static void gate_zoom_to_fit(GateSchematicState *state)
+{
+    if (state->original_pixbuf == NULL || state->scrolled == NULL) {
+        return;
+    }
+
+    gint avail_w = gtk_widget_get_allocated_width(state->scrolled);
+    gint avail_h = gtk_widget_get_allocated_height(state->scrolled);
+    gint orig_w = gdk_pixbuf_get_width(state->original_pixbuf);
+    gint orig_h = gdk_pixbuf_get_height(state->original_pixbuf);
+    if (avail_w <= 1 || avail_h <= 1 || orig_w <= 0 || orig_h <= 0) {
+        return;
+    }
+
+    gdouble scale_w = (gdouble)(avail_w - 4) / (gdouble)orig_w;
+    gdouble scale_h = (gdouble)(avail_h - 4) / (gdouble)orig_h;
+    gate_set_zoom(state, MIN(scale_w, scale_h));
+}
+
+static void on_gate_zoom_in_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    GateSchematicState *state = user_data;
+    gate_set_zoom(state, state->zoom * 1.25);
+}
+
+static void on_gate_zoom_out_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    GateSchematicState *state = user_data;
+    gate_set_zoom(state, state->zoom / 1.25);
+}
+
+static void on_gate_zoom_fit_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    gate_zoom_to_fit((GateSchematicState *)user_data);
+}
+
+static void on_gate_zoom_100_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    gate_set_zoom((GateSchematicState *)user_data, 1.0);
+}
+
+static void on_gate_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAllocation *allocation,
+                                                    gpointer user_data)
+{
+    (void)allocation;
+    gate_zoom_to_fit((GateSchematicState *)user_data);
+    g_signal_handlers_disconnect_by_func(
+        widget, (gpointer)on_gate_scrolled_size_allocate_fit_once, user_data);
+}
+
 void netlist_query_show_gate_schematic(const char *signal_path)
 {
     GtkWindow *parent = GLOBALS->mainwindow != NULL && GTK_IS_WINDOW(GLOBALS->mainwindow)
@@ -231,12 +334,54 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     gtk_window_set_default_size(GTK_WINDOW(window), 700, 500);
     g_free(title);
 
-    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
-    gtk_container_add(GTK_CONTAINER(window), scrolled);
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
 
-    GtkWidget *image = gtk_image_new_from_pixbuf(pixbuf);
-    g_object_unref(pixbuf);
+    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(toolbar), 4);
+    gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
+
+    GtkWidget *zoom_out_button = gtk_button_new_with_label("\xe2\x88\x92");
+    gtk_widget_set_tooltip_text(zoom_out_button, "Zoom Out");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_out_button, FALSE, FALSE, 0);
+
+    GtkWidget *zoom_in_button = gtk_button_new_with_label("+");
+    gtk_widget_set_tooltip_text(zoom_in_button, "Zoom In");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_in_button, FALSE, FALSE, 0);
+
+    GtkWidget *zoom_fit_button = gtk_button_new_with_label("Zoom to Fit");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_fit_button, FALSE, FALSE, 0);
+
+    GtkWidget *zoom_100_button = gtk_button_new_with_label("1:1");
+    gtk_box_pack_start(GTK_BOX(toolbar), zoom_100_button, FALSE, FALSE, 0);
+
+    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
+
+    // Centered so a small diagram doesn't look stranded in a corner of a
+    // much bigger window -- see the identical comment in
+    // schematic_view.c's netlist_query_show_schematic().
+    GtkWidget *image = gtk_image_new();
+    gtk_widget_set_halign(image, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
     gtk_container_add(GTK_CONTAINER(scrolled), image);
+
+    GateSchematicState *state = g_new0(GateSchematicState, 1);
+    state->image = image;
+    state->scrolled = scrolled;
+    state->zoom = 1.0;
+    state->original_pixbuf = pixbuf; /* state now owns this reference */
+    gate_apply_zoom(state);
+
+    g_signal_connect(zoom_in_button, "clicked", G_CALLBACK(on_gate_zoom_in_clicked), state);
+    g_signal_connect(zoom_out_button, "clicked", G_CALLBACK(on_gate_zoom_out_clicked), state);
+    g_signal_connect(zoom_fit_button, "clicked", G_CALLBACK(on_gate_zoom_fit_clicked), state);
+    g_signal_connect(zoom_100_button, "clicked", G_CALLBACK(on_gate_zoom_100_clicked), state);
+    g_signal_connect(scrolled, "size-allocate",
+                     G_CALLBACK(on_gate_scrolled_size_allocate_fit_once), state);
+
+    g_object_set_data_full(G_OBJECT(window), "gate-schematic-state", state,
+                           gate_schematic_state_free);
 
     gtk_widget_show_all(window);
 }
