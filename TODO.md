@@ -109,36 +109,58 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   a redirected log file) made it look hung when it wasn't; the standalone
   harness was more direct anyway for logic explicitly designed to be
   lookup-injectable.
+- **Bus Operations: expand-as-sub-bus + reverse bit order.** "Create Bus"
+  already existed as Edit > Combine Down/Up (`combine_traces()`); this
+  closed the actual original gap. "Expand as Sub-Bus..." (new popover
+  dialog) slices a contiguous bit range out of an existing bus into its
+  own narrower bus trace. "Reverse Bit Order" is a one-click toggle of
+  the existing `TR_REVERSE` flag. Both exposed in a new "Bus Operations"
+  popover section, alongside "Create Bus (Down)/(Up)" (the existing F4/F5
+  shortcuts, given a discoverable home). The real complexity: gtkwave has
+  two unrelated "multi-bit signal" representations -- a real constructed/
+  auto-coalesced vector (`GwBitVector`) and, far more commonly, a
+  natively-declared multi-bit VCD var (a `GwNode` with `extvals` set,
+  same split List X's scan needed) -- only found this mid-verification,
+  since the first version rejected the common case outright. Fixed by
+  normalizing the `extvals` case through `combine_traces(1, t)` (the same
+  machinery already used elsewhere for "make this one trace a vector")
+  before slicing. Known, accepted, documented limitation: slicing a
+  natively-declared signal leaks the excluded bits' throwaway expanded
+  nodes (bounded, one bus-width's worth of small allocations per
+  operation -- see the commit for why a correct partial-free would need
+  new shared-library plumbing disproportionate to this feature).
+  Verified via gdb against the real 4-bit ripple-counter bus: forced past
+  the dialog's modal `gtk_dialog_run()` (breakpoint + `return (gint)-5`
+  to fake a GTK_RESPONSE_OK without ever entering the real modal loop),
+  confirmed the sliced sub-bus's value exactly matches the corresponding
+  bits of the source bus at a known time, and confirmed Reverse Bit Order
+  flips it correctly.
 
 ## Up next, in order
 
-1. **Bus Operations suite** (Create/Edit/Adjust/Reverse Bus,
-   expand-as-sub-bus). Supersedes the plain "no bit-slicing" gap --
-   worth doing this instead of a narrower slicing-only feature.
-
-2. **Compress Time Range**: collapse uninteresting time spans to a "+"
+1. **Compress Time Range**: collapse uninteresting time spans to a "+"
    marker. Self-contained, no dependency on anything above.
 
-3. **Group Manager**: a real dialog for nested signal groups, bulk
+2. **Group Manager**: a real dialog for nested signal groups, bulk
    "move to group".
 
-4. **Highlight incomplete/unresolved nets** (dashed line) in the
+3. **Highlight incomplete/unresolved nets** (dashed line) in the
    schematic -- the clickable schematic's per-node metadata already exists
    to hang this off of; low effort at this point.
 
-5. **Struct/union display** (expandable field tree) and **derived/virtual
+4. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-6. **Editable/exportable schematic mode** (reposition instances,
+5. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-7. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+6. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
    but the highest-effort item here (needs a real sub-timestamp data
    model, not just a UI); lowest priority-to-effort ratio on this list.
 
