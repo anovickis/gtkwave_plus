@@ -67,3 +67,15 @@ gdouble gw_time_to_pixel(GwTime t);
 // A pixel offset that lands inside a compressed span's fixed-width marker
 // maps to a proportional point within that span's real time range.
 GwTime gw_pixel_to_time(gdouble pixel_from_viewport_start);
+
+// Solves for the GLOBALS->tims.start value that would make `anchor_pixel`
+// map (via gw_pixel_to_time(), at the CURRENT zoom/nspx and compressed-span
+// list) to `anchor_time`. The compression-aware analog of the plain
+// `start = anchor_time - anchor_pixel * nspx` formula anchor-preserving
+// zoom code (e.g. pinch-zoom) needs. Does not read or modify
+// GLOBALS->tims.start itself -- it walks backward from `anchor_time` by
+// `anchor_pixel` pixels through the compressed-span list directly, since
+// which gap/marker/normal pixel-region a point falls into depends on the
+// (unknown, being-solved-for) base itself and so can't be recovered by
+// evaluating gw_pixel_to_time() at some other placeholder base.
+GwTime gw_solve_start_for_pixel_anchor(gdouble anchor_pixel, GwTime anchor_time);

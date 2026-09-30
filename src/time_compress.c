@@ -188,6 +188,15 @@ gdouble gw_time_to_pixel(GwTime t)
             break;
         }
 
+        // seg_start is span->start in the common case (base is entirely
+        // before this span), but can be `cursor` itself if `base` falls
+        // inside the span -- in which case the span's OWN marker pixel
+        // width must be shrunk proportionally to just the portion still
+        // ahead of cursor (remaining_dur/span_dur), or a viewport whose
+        // left edge sits mid-span would double-count the part of the
+        // span that's already behind it. A real, reachable case once
+        // compression-aware code (e.g. pinch-zoom) can compute a new
+        // tims.start that lands inside a span, not just adjacent to one.
         GwTime seg_start = MAX(span->start, cursor);
         if (seg_start > cursor) {
             accumulated_px += (gdouble)(seg_start - cursor) * pxns;
@@ -197,9 +206,14 @@ gdouble gw_time_to_pixel(GwTime t)
         GwTime seg_end = MIN(span->end, t);
         if (seg_end > cursor) {
             GwTime span_dur = span->end - span->start;
+            GwTime remaining_dur = span->end - seg_start;
+            gdouble marker_px = span_dur > 0
+                                    ? COMPRESS_MARKER_WIDTH_PX * (gdouble)remaining_dur /
+                                          (gdouble)span_dur
+                                    : 0.0;
             gdouble frac =
-                span_dur > 0 ? (gdouble)(seg_end - cursor) / (gdouble)span_dur : 0.0;
-            accumulated_px += COMPRESS_MARKER_WIDTH_PX * frac;
+                remaining_dur > 0 ? (gdouble)(seg_end - cursor) / (gdouble)remaining_dur : 0.0;
+            accumulated_px += marker_px * frac;
             cursor = seg_end;
         }
     }
@@ -233,6 +247,12 @@ GwTime gw_pixel_to_time(gdouble x)
             continue;
         }
 
+        // See gw_time_to_pixel()'s matching comment: effective_start is
+        // span->start normally, but `cursor` itself if `base` already
+        // falls inside this span, in which case only the remaining
+        // portion of the span still gets a (proportionally smaller)
+        // marker pixel width.
+        GwTime effective_start = MAX(span->start, cursor);
         GwTime gap = (span->start > cursor) ? (span->start - cursor) : 0;
         gdouble gap_px = (gdouble)gap * pxns;
 
@@ -240,16 +260,80 @@ GwTime gw_pixel_to_time(gdouble x)
             return cursor + (GwTime)(remaining_px * nspx);
         }
         remaining_px -= gap_px;
-        cursor = span->start;
+        cursor = effective_start;
 
         GwTime span_dur = span->end - span->start;
-        if (remaining_px <= COMPRESS_MARKER_WIDTH_PX) {
-            gdouble frac = remaining_px / COMPRESS_MARKER_WIDTH_PX;
-            return cursor + (GwTime)(frac * (gdouble)span_dur);
+        GwTime remaining_dur = span->end - effective_start;
+        gdouble marker_px = span_dur > 0
+                                ? COMPRESS_MARKER_WIDTH_PX * (gdouble)remaining_dur /
+                                      (gdouble)span_dur
+                                : 0.0;
+
+        if (remaining_px <= marker_px) {
+            gdouble frac = marker_px > 0 ? remaining_px / marker_px : 0.0;
+            return cursor + (GwTime)(frac * (gdouble)remaining_dur);
         }
-        remaining_px -= COMPRESS_MARKER_WIDTH_PX;
+        remaining_px -= marker_px;
         cursor = span->end;
     }
 
     return cursor + (GwTime)(remaining_px * nspx);
+}
+
+GwTime gw_solve_start_for_pixel_anchor(gdouble anchor_pixel, GwTime anchor_time)
+{
+    gdouble pxns = GLOBALS->pxns;
+    gdouble nspx = GLOBALS->nspx;
+
+    if (anchor_pixel < 0) {
+        anchor_pixel = 0;
+    }
+    if (!time_compress_has_spans()) {
+        return anchor_time - (GwTime)(anchor_pixel * nspx);
+    }
+
+    // Walks backward from `anchor_time` by `anchor_pixel` pixels,
+    // span-by-span in reverse chronological order -- the correct inverse
+    // of gw_pixel_to_time()/gw_time_to_pixel() for solving the unknown
+    // base itself. An earlier version of this function instead evaluated
+    // gw_pixel_to_time() with tims.start forced to 0 and subtracted the
+    // result -- that's invalid here: which gap/marker/normal region a
+    // given pixel falls into depends on base itself (a span's gap width
+    // is `span->start - base`), so forcing base to an arbitrary value
+    // can put the same pixel in a completely different region than the
+    // real base would, giving a wrong answer with no warning.
+    gdouble remaining_px = anchor_pixel;
+    GwTime cursor = anchor_time;
+
+    for (gint i = (gint)GLOBALS->compressed_spans->len - 1; i >= 0; i--) {
+        GwCompressedSpan *span = g_ptr_array_index(GLOBALS->compressed_spans, i);
+
+        GwTime seg_end = MIN(span->end, cursor);
+        if (seg_end <= span->start) {
+            continue; /* span is entirely at-or-after cursor -- not reached yet walking backward */
+        }
+
+        GwTime gap_after_span = cursor - seg_end;
+        gdouble gap_px = (gdouble)gap_after_span * pxns;
+
+        if (remaining_px <= gap_px) {
+            return cursor - (GwTime)(remaining_px * nspx);
+        }
+        remaining_px -= gap_px;
+        cursor = seg_end;
+
+        GwTime span_dur = span->end - span->start;
+        GwTime seg_dur = seg_end - span->start;
+        gdouble marker_px =
+            span_dur > 0 ? COMPRESS_MARKER_WIDTH_PX * (gdouble)seg_dur / (gdouble)span_dur : 0.0;
+
+        if (remaining_px <= marker_px) {
+            gdouble frac = marker_px > 0 ? remaining_px / marker_px : 0.0;
+            return cursor - (GwTime)(frac * (gdouble)seg_dur);
+        }
+        remaining_px -= marker_px;
+        cursor = span->start;
+    }
+
+    return cursor - (GwTime)(remaining_px * nspx);
 }

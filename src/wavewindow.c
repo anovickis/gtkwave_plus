@@ -1338,7 +1338,7 @@ static void wavearea_zoom_begin_event(GtkGesture *gesture,
 
 #ifdef WAVE_GTK3_GESTURE_ZOOM_IS_1D
     if (wavearea_zoom_get_gesture_xy_points(gesture, &x1, &y1, &x2, &y2)) {
-        GLOBALS->wavearea_gesture_initial_x1tim = GLOBALS->tims.start + (x1 * GLOBALS->nspx);
+        GLOBALS->wavearea_gesture_initial_x1tim = gw_pixel_to_time(x1);
 
         GLOBALS->wavearea_gesture_initial_zoom_x_distance = x2 - x1;
         if (GLOBALS->wavearea_gesture_initial_zoom_x_distance < 1.0)
@@ -1423,11 +1423,19 @@ static void wavearea_zoom_scale_changed_event(GtkGestureZoom *controller,
 
                 calczoom(GLOBALS->tims.zoom = z0);
                 width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
-                GLOBALS->tims.start =
-                    GLOBALS->wavearea_gesture_initial_x1tim - (x1 * GLOBALS->nspx);
 
-                new_x1tim = GLOBALS->tims.start + (x1 * GLOBALS->nspx);
-                GLOBALS->tims.start += (GLOBALS->wavearea_gesture_initial_x1tim - new_x1tim);
+                // Compression-aware anchor preservation: solve for the
+                // tims.start that keeps pixel x1 pinned to the same real
+                // time it was at gesture-begin, at the NEW zoom's nspx
+                // and the current compressed-span list (gw_time_to_pixel()/
+                // gw_pixel_to_time() are exact drop-ins for the plain
+                // `start +/- x*nspx` formula this used to use, but only
+                // gw_solve_start_for_pixel_anchor() can invert the
+                // mapping to solve for tims.start itself -- see its
+                // comment in time_compress.h).
+                GLOBALS->tims.start = gw_solve_start_for_pixel_anchor(
+                    x1, GLOBALS->wavearea_gesture_initial_x1tim);
+                new_x1tim = gw_pixel_to_time(x1);
 
                 GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
                 GwMarker *baseline_marker = gw_project_get_baseline_marker(GLOBALS->project);
@@ -1435,7 +1443,7 @@ static void wavearea_zoom_scale_changed_event(GtkGestureZoom *controller,
 
                 gw_marker_set_position(primary_marker, new_x1tim);
                 gw_marker_set_enabled(primary_marker, TRUE);
-                gw_marker_set_position(baseline_marker, GLOBALS->tims.start + (x2 * GLOBALS->nspx));
+                gw_marker_set_position(baseline_marker, gw_pixel_to_time(x2));
                 gw_marker_set_enabled(baseline_marker, TRUE);
                 gw_marker_set_enabled(ghost_marker, FALSE);
 
