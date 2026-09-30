@@ -204,8 +204,15 @@ static void show_rename_dialog(GtkWindow *parent, GwTrace *target_begin)
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_OK) {
         const gchar *new_name = gtk_entry_get_text(GTK_ENTRY(entry));
         if (new_name != NULL && new_name[0] != '\0') {
-            g_free(target_begin->name);
-            target_begin->name = g_strdup(new_name);
+            // t->name is allocated with malloc_2() (see create_group(),
+            // src/menu.c), NOT g_malloc/g_strdup -- malloc_2() prepends
+            // its own allocation-chain bookkeeping before the returned
+            // pointer, so freeing it with plain g_free() corrupts the
+            // heap (found via a real SIGABRT while verifying this
+            // dialog's save/reload round-trip). free_2()/strdup_2() are
+            // its matching pair.
+            free_2(target_begin->name);
+            target_begin->name = strdup_2(new_name);
             GLOBALS->signalwindow_width_dirty = 1;
             redraw_signals_and_waves();
         }
