@@ -196,6 +196,8 @@ enum WV_MenuItems
     WV_MENU_SEP7B,
     WV_MENU_SSR,
     WV_MENU_SEP7,
+    WV_MENU_LISTX,
+    WV_MENU_SEP7LX,
 #if !defined __MINGW32__
     WV_MENU_OPENHS,
     WV_MENU_OPENIHS,
@@ -371,6 +373,7 @@ void menu_lexize(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_reverse(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_tracesearchbox(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_signalsearch(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_list_x(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_autocoalesce(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_autocoalesce_reversal(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_autoname_bundles_on(gpointer null_data, guint callback_action, GtkWidget *widget);

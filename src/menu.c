@@ -31,6 +31,7 @@
 #include "console_panel.h"
 #include "marker_panel.h"
 #include "source_panel.h"
+#include "list_x_view.h"
 #include <cocoa_misc.h>
 #include <assert.h>
 
@@ -2978,6 +2979,15 @@ void menu_signalsearch_cleanup(GtkWidget *widget, gpointer data)
     DEBUG(printf("menu_signalsearch_cleanup()\n"));
 }
 
+void menu_list_x(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    list_x_show();
+}
+
 void menu_signalsearch(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
     (void)null_data;
@@ -5311,6 +5321,8 @@ static gtkwave_mlist_t menu_items[] = {
     WAVE_GTKIFE("/Search/<separator>", NULL, NULL, WV_MENU_SEP7B, "<Separator>"),
     WAVE_GTKIFE("/Search/Signal Search Regexp", "<Alt>S", menu_signalsearch, WV_MENU_SSR, "<Item>"),
     WAVE_GTKIFE("/Search/<separator>", NULL, NULL, WV_MENU_SEP7, "<Separator>"),
+    WAVE_GTKIFE("/Search/List X...", NULL, menu_list_x, WV_MENU_LISTX, "<Item>"),
+    WAVE_GTKIFE("/Search/<separator>", NULL, NULL, WV_MENU_SEP7LX, "<Separator>"),
 #if !defined __MINGW32__
     WAVE_GTKIFE("/Search/Open Source Definition",
                 NULL,

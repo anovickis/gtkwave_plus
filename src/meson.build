@@ -33,6 +33,7 @@ gtkwave_sources = [
     'gw-time-display.c',
     'gw-wave-view-traces.c',
     'gw-wave-view.c',
+    'list_x_view.c',
     'logfile.c',
     'lx2.c',
     'main.c',
