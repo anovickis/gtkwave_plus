@@ -171,29 +171,47 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   confirmed `tims.end` -- how much timeline the same pixel-width
   viewport shows -- grew by very close to the predicted amount after
   compressing a 30-unit span to the 14px marker).
+- **Group Manager.** Built on the existing group data model (begin/end
+  `TR_GRP_BEGIN`/`TR_GRP_END` sentinel pairs, nesting already supported
+  via `t_grp` ancestor-chain pointers) rather than inventing a new one --
+  what was actually missing was a dialog and a way to move
+  already-existing traces into an already-existing group (`create_group()`
+  only ever builds a brand new group from the current highlight; nothing
+  like "move to group" existed anywhere). New Edit > Group Manager...
+  lists every group indented by nesting depth, with Move Selected Here
+  (reuses `CutBuffer()`/`PasteBuffer()`, the same primitives
+  `create_group()` uses, guarded against moving a group into itself or
+  one of its own subgroups via a cheap walk up the existing `t_grp`
+  chain), Rename, and Ungroup (frees synthetic sentinels but keeps a real
+  signal that's wearing `TR_GRP_BEGIN` via the "Expand" bit-blast
+  feature). Verified against the real design via gdb, driving the actual
+  dialog through real `gtk_button_clicked()` calls on the real widgets
+  (found by walking the live GTK container tree) rather than calling
+  internal logic directly. Confirmed move-into-a-nested-group lands the
+  signal as that group's last child with correct `t_grp`; confirmed
+  Ungroup removes the sentinels and correctly repoints every former
+  member's `t_grp` to the outer group; confirmed the self-move guard
+  rejects moving a group into itself without corrupting the list.
 
 ## Up next, in order
 
-1. **Group Manager**: a real dialog for nested signal groups, bulk
-   "move to group".
-
-2. **Highlight incomplete/unresolved nets** (dashed line) in the
+1. **Highlight incomplete/unresolved nets** (dashed line) in the
    schematic -- the clickable schematic's per-node metadata already exists
    to hang this off of; low effort at this point.
 
-3. **Struct/union display** (expandable field tree) and **derived/virtual
+2. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-4. **Editable/exportable schematic mode** (reposition instances,
+3. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-5. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+4. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
    but the highest-effort item here (needs a real sub-timestamp data
    model, not just a UI); lowest priority-to-effort ratio on this list.
 
