@@ -274,6 +274,26 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   exactly as expected, confirmed auto-detection finds the right module
   and instance, confirmed the retry opens a real gate-level schematic
   with the correct status message noting the substitution.
+- **Add an MCP server to gtkwave (`mcp/gtkwave-mcp`).** A small
+  standalone stdio<->WCP bridge (glib/gio/json-glib only, no GTK): MCP
+  clients spawn it and speak newline-delimited JSON-RPC 2.0 over its
+  stdin/stdout, and it relays each tool call to an already-running
+  `gtkwave --wcp` instance as an ordinary WCP client, one tool per WCP
+  command. A tool call's `arguments` merge directly into the WCP
+  envelope unchanged (identical field names), so the bridge needs no
+  per-command translation -- WCP's own server does the real validation
+  and the bridge just relays its response line back as the tool result.
+  Scoped to the existing WCP surface only; this session's other new
+  backends (netlist-query/schematic/search/List-X/bus-ops) aren't
+  reachable over any socket protocol yet, WCP or otherwise -- exposing
+  those is follow-up work. Verified end-to-end with no gdb involved at
+  all (the actual point of the feature): launched a plain `gtkwave --wcp`
+  instance, piped real JSON-RPC sequences into the bridge across several
+  separate invocations, confirmed initialize/tools/list/tools/call all
+  work, confirmed state persists across invocations against the same
+  gtkwave process (get_item_list reflecting an earlier call's results),
+  and confirmed a real WCP-level error surfaces correctly as
+  `isError: true`.
 
 ## Up next, in order
 
@@ -281,81 +301,67 @@ Re-ranked by value (not just effort) after a deliberate stock-take of
 everything shipped so far plus standard Verdi/nWave parity gaps -- see
 the conversation history for the full reasoning behind this ordering.
 
-1. **Add an MCP server to gtkwave**, exposing the existing WCP command
-   set (add_items/add_markers/get_item_list/...) plus this session's new
-   netlist-query/schematic/search/List-X/bus-op backends as MCP tools.
-   Directly motivated by this session's own repeated pain: with no MCP
-   server, verifying new GUI features headlessly meant reverse-engineering
-   GTK internals via gdb forced-calls and breakpoint tricks every single
-   time. A real MCP server would let an AI agent (or any MCP client)
-   drive and query gtkwave directly and reliably instead. WCP is the
-   directly-analogous precedent (a similar JSON-over-socket control
-   protocol already exists and already covers a lot of the same ground),
-   so this is more "wrap and extend existing plumbing" than new
-   architecture -- moderate effort, unusually high value given how much
-   of this session's own friction it would have prevented.
-
-2. **Undo/redo (or at minimum a reversible soft-delete) for destructive
+1. **Undo/redo (or at minimum a reversible soft-delete) for destructive
    trace-list operations**: Ungroup, Delete, Combine, Expand. None of
    this session's group/bus features have a safety net; one misclick
    loses real organization work with no way back.
 
-3. **Bus Operations: a real Edit/Adjust Bus composition editor**
+2. **Bus Operations: a real Edit/Adjust Bus composition editor**
    (reorder/add/remove constituent bits of an existing bus). Rounds out
    the originally-scoped "Create/Edit/Adjust/Reverse Bus" item -- only
    Expand-as-sub-bus and Reverse got built.
 
-4. **Waveform Compare / structured two-run diffing.** One of the most-
+3. **Waveform Compare / structured two-run diffing.** One of the most-
    requested Verdi/nWave parity features. Big lift, big payoff.
 
-5. **Struct/union display** (expandable field tree) and **derived/virtual
+4. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-6. **Editable/exportable schematic mode** (reposition instances,
+5. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-7. **Verify Group Manager's renames/new structure round-trip through
+6. **Verify Group Manager's renames/new structure round-trip through
    save/reload.** Lower risk than the Compress Time Range persistence
    gap since groups reuse existing trace-list save infra, but should be
    explicitly checked, not assumed.
 
-8. **Time-span Comments** (range annotations, distinct from point
+7. **Time-span Comments** (range annotations, distinct from point
     markers) -- natural complement to markers/groups for documenting a
     debug session.
 
-9. **Compress Time Range: make touch-gesture pinch-zoom compression-
+8. **Compress Time Range: make touch-gesture pinch-zoom compression-
     aware.** The one documented gap in that feature -- the existing
     pinch-zoom math is self-referential and would need real algebraic
     rework, not a mechanical substitution.
 
-10. **Auto Update** (live-tail a still-running simulation). A genuinely
+9. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature.
 
-11. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+10. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-12. **Source browsing beyond single-file cross-probe** -- multi-file/
+11. **Source browsing beyond single-file cross-probe** -- multi-file/
     project-wide source navigation.
 
-13. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+12. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-14. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+13. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-15. **Compress Time Range: compression-aware page/scroll-increment
+14. **Compress Time Range: compression-aware page/scroll-increment
     math.** Precision polish (paging jumps a slightly wrong amount
     across a compressed span); low urgency.
 
-16. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+15. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
