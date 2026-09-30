@@ -265,6 +265,8 @@ struct Global
     GtkWidget *source_panel_root; /* top-level widget shown/hidden as a unit, from source_panel.c */
     GtkWidget *source_text_view;
     GtkWidget *source_path_label;
+    GtkWidget *source_file_combo; /* GtkComboBoxText, lets the user manually switch among
+                                     GLOBALS->netlist_source_files; from source_panel.c */
     GtkTextTag *source_highlight_tag;
     char *source_last_path; /* cached, avoids re-reading the file on every click */
     guint source_last_highlighted_line;

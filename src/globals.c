@@ -236,6 +236,7 @@ static const struct Global globals_base_values = {
     NULL, /* source_panel_root */
     NULL, /* source_text_view */
     NULL, /* source_path_label */
+    NULL, /* source_file_combo */
     NULL, /* source_highlight_tag */
     NULL, /* source_last_path */
     0, /* source_last_highlighted_line */

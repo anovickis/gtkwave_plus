@@ -331,8 +331,81 @@ static void on_project_unnamed_marker_changed_for_source(GwProject *project, gpo
     refresh_value_annotations();
 }
 
+// Lets the user manually switch between the files already known via
+// GLOBALS->netlist_source_files, instead of only ever being able to
+// reach a file via an external cross-probe jump into it. Deliberately
+// small: a flat list of the configured HDL files (no project tree, no
+// tabs, no independent per-file scroll/highlight state -- see the TODO
+// writeup for why that fuller "project explorer" is a separate, larger
+// effort). Helps only once the user has configured source files via a
+// driver/load/cone query at least once in this session; hidden until
+// then.
+static void on_file_combo_changed(GtkComboBox *combo, gpointer user_data)
+{
+    (void)user_data;
+
+    const gchar *path = gtk_combo_box_get_active_id(combo);
+    if (path == NULL) {
+        return;
+    }
+
+    // Jump to line 1 of the newly-picked file -- there's no specific
+    // line to highlight for a manual file switch, unlike a real
+    // cross-probe hit.
+    source_panel_show_file_line(path, 1);
+}
+
+// Repopulates the file combo from GLOBALS->netlist_source_files (a
+// no-op, cheap to call on every source_panel_show_file_line() --
+// typically a handful of files). Blocks the "changed" handler while
+// rebuilding/reselecting so this doesn't re-enter
+// source_panel_show_file_line() itself.
+static void refresh_file_combo(const char *current_path)
+{
+    if (GLOBALS->source_file_combo == NULL) {
+        return;
+    }
+
+    g_signal_handlers_block_by_func(GLOBALS->source_file_combo, on_file_combo_changed, NULL);
+
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(GLOBALS->source_file_combo));
+
+    GPtrArray *files = GLOBALS->netlist_source_files;
+    if (files == NULL || files->len == 0) {
+        gtk_widget_hide(GLOBALS->source_file_combo);
+        g_signal_handlers_unblock_by_func(GLOBALS->source_file_combo, on_file_combo_changed, NULL);
+        return;
+    }
+
+    for (guint i = 0; i < files->len; i++) {
+        const gchar *path = g_ptr_array_index(files, i);
+        gchar *base = g_path_get_basename(path);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(GLOBALS->source_file_combo), path, base);
+        g_free(base);
+    }
+
+    if (current_path != NULL) {
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(GLOBALS->source_file_combo), current_path);
+    }
+
+    gtk_widget_show(GLOBALS->source_file_combo);
+
+    g_signal_handlers_unblock_by_func(GLOBALS->source_file_combo, on_file_combo_changed, NULL);
+}
+
 GtkWidget *create_source_panel(void)
 {
+    GLOBALS->source_file_combo = gtk_combo_box_text_new();
+    gtk_widget_set_margin_start(GLOBALS->source_file_combo, 4);
+    gtk_widget_set_margin_end(GLOBALS->source_file_combo, 4);
+    gtk_widget_set_margin_top(GLOBALS->source_file_combo, 2);
+    gtk_widget_set_tooltip_text(GLOBALS->source_file_combo,
+                                "Switch between this design's configured HDL source files");
+    g_signal_connect(GLOBALS->source_file_combo, "changed", G_CALLBACK(on_file_combo_changed), NULL);
+    // Hidden until GLOBALS->netlist_source_files is actually configured
+    // (refresh_file_combo() shows it once there's something to list).
+    gtk_widget_set_no_show_all(GLOBALS->source_file_combo, TRUE);
+
     GLOBALS->source_path_label = gtk_label_new("(no source)");
     gtk_widget_set_halign(GLOBALS->source_path_label, GTK_ALIGN_START);
     gtk_widget_set_margin_start(GLOBALS->source_path_label, 4);
@@ -379,6 +452,7 @@ GtkWidget *create_source_panel(void)
     gtk_widget_show(scrolled_window);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), GLOBALS->source_file_combo, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), GLOBALS->source_path_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), scrolled_window, TRUE, TRUE, 0);
@@ -478,6 +552,8 @@ void source_panel_show_file_line(const char *path, guint32 line_number)
     gtk_label_set_text(GTK_LABEL(GLOBALS->source_path_label), label_text);
     gtk_widget_set_tooltip_text(GLOBALS->source_path_label, path);
     g_free(label_text);
+
+    refresh_file_combo(path);
 
     source_panel_set_visible(TRUE);
     refresh_value_annotations();
