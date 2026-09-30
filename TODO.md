@@ -359,6 +359,33 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   real entry's text, faked the OK response -- confirmed the comment was
   added with the exact range/text; verified persistence end-to-end
   (write, clear, reload, confirmed exact round-trip).
+- **Compress Time Range: made touch-gesture pinch-zoom compression-
+  aware.** Pinch-zoom's anchor-preserving math used the plain
+  `tims.start + x*nspx` formula directly, ignoring any active
+  compressed span, so pinching near one would visibly jump/drift
+  instead of staying pinned under the user's fingers. New
+  `gw_solve_start_for_pixel_anchor()`: given a pixel position and the
+  real time it should keep representing, solves for `tims.start` by
+  walking backward from the anchor time by the anchor pixel count,
+  span-by-span -- a genuinely different (and harder) problem than the
+  existing `gw_time_to_pixel()`/`gw_pixel_to_time()` (those map a
+  *known* base; this solves for the base itself). An initial version
+  tried to shortcut this by evaluating `gw_pixel_to_time()` with
+  `tims.start` forced to 0 and subtracting the result back out -- wrong
+  (which gap/marker/normal pixel-region a point falls into depends on
+  the base itself), caught only by directly verifying the round-trip.
+  That same verification surfaced a second, pre-existing bug in
+  `gw_time_to_pixel()`/`gw_pixel_to_time()` themselves: neither
+  correctly handled `tims.start` falling *inside* a compressed span
+  (only before/after one), making them mutually inconsistent whenever
+  that happened -- reachable before too (e.g. "Go To" a time inside a
+  compressed span) but newly routine once pinch-zoom could legitimately
+  land there. Fixed both. Verified via gdb against real GLOBALS state:
+  confirmed the common (base-before-span) case is byte-for-byte
+  unchanged, confirmed the mid-span-base fix makes the two functions
+  exact inverses again, confirmed a full solve-then-verify round trip
+  holds exactly for both a zoom-in (anchor landing inside a compressed
+  marker) and a zoom-out (anchor before the span) scenario.
 
 ## Up next, in order
 
@@ -381,33 +408,28 @@ the conversation history for the full reasoning behind this ordering.
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-4. **Compress Time Range: make touch-gesture pinch-zoom compression-
-    aware.** The one documented gap in that feature -- the existing
-    pinch-zoom math is self-referential and would need real algebraic
-    rework, not a mechanical substitution.
-
-5. **Auto Update** (live-tail a still-running simulation). A genuinely
+4. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature.
 
-6. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+5. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-7. **Source browsing beyond single-file cross-probe** -- multi-file/
+6. **Source browsing beyond single-file cross-probe** -- multi-file/
     project-wide source navigation.
 
-8. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+7. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-9. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+8. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-10. **Compress Time Range: compression-aware page/scroll-increment
+9. **Compress Time Range: compression-aware page/scroll-increment
     math.** Precision polish (paging jumps a slightly wrong amount
     across a compressed span); low urgency.
 
-11. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+10. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
