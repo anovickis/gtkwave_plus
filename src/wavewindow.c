@@ -557,7 +557,7 @@ static gint motion_notify_event(GtkWidget *widget, GdkEventMotion *event)
                     if (GLOBALS->tims.start != GLOBALS->tims.last) {
                         gfloat pageinc;
 
-                        pageinc = (gfloat)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+                        pageinc = gw_time_page_increment();
 
                         if (GLOBALS->nsperframe < 10) {
                             GLOBALS->tims.start += GLOBALS->nsperframe;
@@ -740,7 +740,7 @@ void alt_move_right(gboolean fine_scroll)
 {
     GwTime ntinc, ntfrac;
 
-    ntinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    ntinc = gw_time_page_increment();
     ntfrac = ntinc * GLOBALS->page_divisor * (SANE_INCREMENT / (fine_scroll ? 8.0 : 1.0));
     if (!ntfrac)
         ntfrac = 1;
@@ -791,7 +791,7 @@ void alt_zoom_out(GtkWidget *text, gpointer data)
     calczoom(GLOBALS->tims.zoom);
 
     if (GLOBALS->do_zoom_center) {
-        width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+        width = gw_time_page_increment();
         GLOBALS->tims.start = time_trunc(middle - (width / 2));
         if (GLOBALS->tims.start + width > GLOBALS->tims.last)
             GLOBALS->tims.start = time_trunc(GLOBALS->tims.last - width);
@@ -848,7 +848,7 @@ void alt_zoom_in(GtkWidget *text, gpointer data)
         calczoom(GLOBALS->tims.zoom);
 
         if (GLOBALS->do_zoom_center) {
-            width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+            width = gw_time_page_increment();
             GLOBALS->tims.start = time_trunc(middle - (width / 2));
             if (GLOBALS->tims.start + width > GLOBALS->tims.last)
                 GLOBALS->tims.start = time_trunc(GLOBALS->tims.last - width);
@@ -1422,7 +1422,7 @@ static void wavearea_zoom_scale_changed_event(GtkGestureZoom *controller,
                 GwTime width, new_x1tim;
 
                 calczoom(GLOBALS->tims.zoom = z0);
-                width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+                width = gw_time_page_increment();
 
                 // Compression-aware anchor preservation: solve for the
                 // tims.start that keeps pixel x1 pinned to the same real
@@ -1604,7 +1604,7 @@ static gboolean wavearea_swipe_tick(GtkWidget *widget,
                 hadj = GTK_ADJUSTMENT(GLOBALS->wave_hslider);
                 ntinc = inc = dest - gtk_adjustment_get_value(hadj);
                 if (ntinc) {
-                    pageinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+                    pageinc = gw_time_page_increment();
 
                     if (dest <= (GLOBALS->tims.last - pageinc))
                         gtk_adjustment_set_value(hadj, GLOBALS->tims.timecache = dest);

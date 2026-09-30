@@ -44,7 +44,7 @@ gboolean configure_event(GtkWidget *widget, GdkEventConfigure *event)
     DEBUG(printf("WaveWin Configure Event h: %d, w: %d\n", allocation.height, allocation.width));
 
     if (GLOBALS->timestart_from_savefile_valid) {
-        gfloat pageinc = (gfloat)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+        gfloat pageinc = gw_time_page_increment();
 
         if ((GLOBALS->timestart_from_savefile >= GLOBALS->tims.first) &&
             (GLOBALS->timestart_from_savefile <= (GLOBALS->tims.last - pageinc))) {

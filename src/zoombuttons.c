@@ -11,6 +11,7 @@
 #include "globals.h"
 #include "pixmaps.h"
 #include "currenttime.h"
+#include "time_compress.h"
 #include "debug.h"
 
 void fix_wavehadj(void)
@@ -22,7 +23,7 @@ void fix_wavehadj(void)
     gtk_adjustment_set_lower(hadj, GLOBALS->tims.first);
     gtk_adjustment_set_upper(hadj, GLOBALS->tims.last + 2.0);
 
-    pageinc = (gfloat)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    pageinc = gw_time_page_increment();
     gtk_adjustment_set_page_increment(hadj, (pageinc >= 1.0) ? pageinc : 1.0);
     gtk_adjustment_set_page_size(hadj, gtk_adjustment_get_page_increment(hadj));
 
@@ -67,7 +68,7 @@ void service_zoom_right(GtkWidget *text, gpointer data)
     GtkAdjustment *hadj;
     GwTime ntinc;
 
-    ntinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    ntinc = gw_time_page_increment();
 
     GLOBALS->tims.timecache = GLOBALS->tims.last - ntinc + 1;
     if (GLOBALS->tims.timecache < GLOBALS->tims.first)
@@ -108,7 +109,7 @@ void service_zoom_out(GtkWidget *text, gpointer data)
     calczoom(GLOBALS->tims.zoom);
 
     if (GLOBALS->do_zoom_center) {
-        width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+        width = gw_time_page_increment();
         GLOBALS->tims.start = time_trunc(middle - (width / 2));
         if (GLOBALS->tims.start + width > GLOBALS->tims.last)
             GLOBALS->tims.start = time_trunc(GLOBALS->tims.last - width);
@@ -161,7 +162,7 @@ void service_zoom_in(GtkWidget *text, gpointer data)
         calczoom(GLOBALS->tims.zoom);
 
         if (GLOBALS->do_zoom_center) {
-            width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+            width = gw_time_page_increment();
             GLOBALS->tims.start = time_trunc(middle - (width / 2));
             if (GLOBALS->tims.start + width > GLOBALS->tims.last)
                 GLOBALS->tims.start = time_trunc(GLOBALS->tims.last - width);

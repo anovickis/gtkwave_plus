@@ -10,6 +10,7 @@
 #include "globals.h"
 #include <config.h>
 #include "currenttime.h"
+#include "time_compress.h"
 #include "pixmaps.h"
 #include "strace.h"
 #include "debug.h"
@@ -440,7 +441,7 @@ static void edge_search_2(int direction, int is_last_iteration)
     if (is_last_iteration) {
         update_time_box();
 
-        width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+        width = gw_time_page_increment();
         if ((maxbase < GLOBALS->tims.start) || (maxbase >= GLOBALS->tims.start + width)) {
             if ((maxbase < 0) || (maxbase < GLOBALS->tims.first) ||
                 (maxbase > GLOBALS->tims.last)) {

@@ -79,3 +79,17 @@ GwTime gw_pixel_to_time(gdouble pixel_from_viewport_start);
 // (unknown, being-solved-for) base itself and so can't be recovered by
 // evaluating gw_pixel_to_time() at some other placeholder base.
 GwTime gw_solve_start_for_pixel_anchor(gdouble anchor_pixel, GwTime anchor_time);
+
+// The real time-duration that GLOBALS->wavewidth pixels represents,
+// starting from the current viewport's left edge (GLOBALS->tims.start) --
+// drop-in replacement for the `(GwTime)(((gdouble)GLOBALS->wavewidth) *
+// GLOBALS->nspx)` "page increment" idiom duplicated across menu.c,
+// shiftbuttons.c, zoombuttons.c, pagebuttons.c, edgebuttons.c, strace.c,
+// logfile.c, wcp_gtkwave.c, list_x_view.c, time_span_comments.c,
+// gw-wave-view.c, main.c and wavewindow.c. That plain formula
+// underestimates a page's real duration whenever a compressed span falls
+// within it (the compressed portion covers far more real time than its
+// fixed marker width implies) -- this instead asks how much time
+// gw_pixel_to_time() actually walks through over that pixel span,
+// falling back to the exact plain formula when nothing is compressed.
+GwTime gw_time_page_increment(void);

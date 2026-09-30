@@ -10,6 +10,7 @@
 #include "globals.h"
 #include <config.h>
 #include "currenttime.h"
+#include "time_compress.h"
 #include "pixmaps.h"
 #include "debug.h"
 
@@ -45,7 +46,7 @@ void service_right_page(GtkWidget *text, gpointer data)
 
     GwTime ntinc, ntfrac;
 
-    ntinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    ntinc = gw_time_page_increment();
     ntfrac = ntinc * GLOBALS->page_divisor;
 
     if ((ntfrac < 1) || (ntinc < 1))

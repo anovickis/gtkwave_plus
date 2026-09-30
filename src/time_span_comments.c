@@ -3,6 +3,7 @@
 #include "time_span_comments.h"
 #include "globals.h"
 #include "currenttime.h"
+#include "time_compress.h"
 #include "status.h"
 
 static void time_span_comment_free(gpointer data)
@@ -77,7 +78,7 @@ static void goto_time(GwTime t)
     GtkAdjustment *hadj = GTK_ADJUSTMENT(GLOBALS->wave_hslider);
     gtk_adjustment_set_value(hadj, (gdouble)t);
 
-    GwTime pageinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    GwTime pageinc = gw_time_page_increment();
     if (t < (GLOBALS->tims.last - pageinc + 1)) {
         GLOBALS->tims.timecache = t;
     } else {

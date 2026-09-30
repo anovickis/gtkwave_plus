@@ -3565,7 +3565,7 @@ void movetotime_cleanup(GtkWidget *widget, gpointer data)
     hadj = GTK_ADJUSTMENT(GLOBALS->wave_hslider);
     gtk_adjustment_set_value(hadj, gt);
 
-    pageinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    pageinc = gw_time_page_increment();
     if (gt < (GLOBALS->tims.last - pageinc + 1))
         GLOBALS->tims.timecache = gt;
     else {

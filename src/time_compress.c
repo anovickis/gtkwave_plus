@@ -337,3 +337,12 @@ GwTime gw_solve_start_for_pixel_anchor(gdouble anchor_pixel, GwTime anchor_time)
 
     return cursor - (GwTime)(remaining_px * nspx);
 }
+
+GwTime gw_time_page_increment(void)
+{
+    // gw_pixel_to_time(0) is always exactly GLOBALS->tims.start (pixel 0
+    // is the viewport's left edge by definition), so this is exactly
+    // "how much time do GLOBALS->wavewidth pixels cover, compression-
+    // aware" without a redundant second call for the trivial subtrahend.
+    return gw_pixel_to_time((gdouble)GLOBALS->wavewidth) - GLOBALS->tims.start;
+}

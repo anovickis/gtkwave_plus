@@ -10,6 +10,7 @@
 #include "globals.h"
 #include <config.h>
 #include "currenttime.h"
+#include "time_compress.h"
 #include "pixmaps.h"
 #include "debug.h"
 
@@ -66,7 +67,7 @@ void service_right_shift(GtkWidget *text, gpointer data)
     else
         gtk_adjustment_set_value(hadj, GLOBALS->tims.last - inc);
 
-    pageinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    pageinc = gw_time_page_increment();
 
     if ((GLOBALS->tims.start + ntinc) < (GLOBALS->tims.last - pageinc + 1))
         GLOBALS->tims.timecache = GLOBALS->tims.start + ntinc;

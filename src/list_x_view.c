@@ -6,6 +6,7 @@
 #include "netlist_query_ui.h"
 #include "timeentry.h"
 #include "currenttime.h"
+#include "time_compress.h"
 #include "status.h"
 
 // Cap on how many bad-value intervals we'll collect, so a pathological
@@ -254,7 +255,7 @@ static void goto_time(GwTime t)
     GtkAdjustment *hadj = GTK_ADJUSTMENT(GLOBALS->wave_hslider);
     gtk_adjustment_set_value(hadj, (gdouble)t);
 
-    GwTime pageinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    GwTime pageinc = gw_time_page_increment();
     if (t < (GLOBALS->tims.last - pageinc + 1)) {
         GLOBALS->tims.timecache = t;
     } else {

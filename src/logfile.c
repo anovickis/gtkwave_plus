@@ -8,6 +8,7 @@
  */
 
 #include "globals.h"
+#include "time_compress.h"
 #include <config.h>
 #include <gtk/gtk.h>
 #include <ctype.h>
@@ -96,7 +97,7 @@ static void center_op(void)
         middle = primary_pos;
     }
 
-    width = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+    width = gw_time_page_increment();
     GLOBALS->tims.start = time_trunc(middle - (width / 2));
     if (GLOBALS->tims.start + width > GLOBALS->tims.last)
         GLOBALS->tims.start = time_trunc(GLOBALS->tims.last - width);

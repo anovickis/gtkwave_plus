@@ -57,6 +57,7 @@
 #include "symbol.h"
 #include "main.h"
 #include "menu.h"
+#include "time_compress.h"
 #include "vcd.h"
 #include "lx2.h"
 #include "pixmaps.h"
@@ -2308,7 +2309,7 @@ savefile_bail:
                     hadj = GTK_ADJUSTMENT(GLOBALS->wave_hslider);
                     gtk_adjustment_set_value(hadj, gt);
 
-                    pageinc = (GwTime)(((gdouble)GLOBALS->wavewidth) * GLOBALS->nspx);
+                    pageinc = gw_time_page_increment();
                     if (gt < (GLOBALS->tims.last - pageinc + 1))
                         GLOBALS->tims.timecache = gt;
                     else {

@@ -13,6 +13,7 @@
 #include "analyzer.h"
 #include "color.h"
 #include "currenttime.h"
+#include "time_compress.h"
 #include "globals.h"
 #include "lx2.h"
 #include "signal_list.h"
@@ -500,7 +501,7 @@ static char* handle_set_viewport_to(WcpServer *server, WcpCommand *cmd)
     }
 
     GwTime target = (GwTime)cmd->data.viewport_to.timestamp;
-    GwTime width = (GwTime)(GLOBALS->wavewidth * GLOBALS->nspx);
+    GwTime width = gw_time_page_increment();
     GwTime max_width = GLOBALS->tims.last - GLOBALS->tims.first;
 
     if (width <= 0 || width > max_width) {
