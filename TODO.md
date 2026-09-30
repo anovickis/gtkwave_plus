@@ -347,6 +347,18 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   traces, reloaded via `read_save_helper()`, and confirmed every trace's
   name and the correct nested `t_grp` ancestor-chain pointers matched
   the original structure exactly.
+- **Time-Span Comments** (range annotations, distinct from point/named
+  markers) -- natural complement to markers/groups for documenting a
+  debug session. New "Add Time-Span Comment..." (reads the primary/
+  baseline marker span the same way Compress Time Range already does)
+  and "Time-Span Comments..." list window (Go To/Delete per row, same
+  shape List X already uses). Persistence mirrors Compress Time Range's
+  own precedent exactly: a new `[time_span_comment] <start> <end>
+  "<text>"` savefile directive. Verified via gdb forced calls: set real
+  markers, broke in at the real add dialog's `gtk_dialog_run()`, set the
+  real entry's text, faked the OK response -- confirmed the comment was
+  added with the exact range/text; verified persistence end-to-end
+  (write, clear, reload, confirmed exact round-trip).
 
 ## Up next, in order
 
@@ -369,37 +381,33 @@ the conversation history for the full reasoning behind this ordering.
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-4. **Time-span Comments** (range annotations, distinct from point
-    markers) -- natural complement to markers/groups for documenting a
-    debug session.
-
-5. **Compress Time Range: make touch-gesture pinch-zoom compression-
+4. **Compress Time Range: make touch-gesture pinch-zoom compression-
     aware.** The one documented gap in that feature -- the existing
     pinch-zoom math is self-referential and would need real algebraic
     rework, not a mechanical substitution.
 
-6. **Auto Update** (live-tail a still-running simulation). A genuinely
+5. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature.
 
-7. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+6. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-8. **Source browsing beyond single-file cross-probe** -- multi-file/
+7. **Source browsing beyond single-file cross-probe** -- multi-file/
     project-wide source navigation.
 
-9. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+8. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-10. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+9. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-11. **Compress Time Range: compression-aware page/scroll-increment
+10. **Compress Time Range: compression-aware page/scroll-increment
     math.** Precision polish (paging jumps a slightly wrong amount
     across a compressed span); low urgency.
 
-12. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+11. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
