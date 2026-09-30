@@ -276,6 +276,8 @@ struct Global
     char *netlist_top_module; /* from netlist_query_ui.c; NULL until configured */
     GPtrArray *compressed_spans; /* owned GwCompressedSpan*, sorted by start, from time_compress.c;
                                     NULL/empty means no compression is active */
+    GPtrArray *time_span_comments; /* owned GwTimeSpanComment*, from time_span_comments.c; NULL/empty
+                                       means none exist yet */
     GtkWidget *sstpane; /* from main.c 215 */
     GtkWidget *expanderwindow; /* from main.c 216 */
     char disable_window_manager; /* from main.c 217 */

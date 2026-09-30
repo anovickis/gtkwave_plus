@@ -34,6 +34,7 @@
 #include "group_manager.h"
 #include "list_x_view.h"
 #include "time_compress.h"
+#include "time_span_comments.h"
 #include "undo_stack.h"
 #include <cocoa_misc.h>
 #include <assert.h>
@@ -2302,6 +2303,24 @@ void menu_uncompress_all(gpointer null_data, guint callback_action, GtkWidget *w
     (void)widget;
 
     time_compress_action_uncompress_all();
+}
+
+void menu_add_time_span_comment(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    time_span_comments_show_add_dialog();
+}
+
+void menu_time_span_comments(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    time_span_comments_show_list();
 }
 
 /**/
@@ -5114,6 +5133,17 @@ static gtkwave_mlist_t menu_items[] = {
                 WV_MENU_COMPRESS,
                 "<Item>"),
     WAVE_GTKIFE("/Edit/Uncompress All", NULL, menu_uncompress_all, WV_MENU_UNCOMPRESS, "<Item>"),
+    WAVE_GTKIFE("/Edit/<separator>", NULL, NULL, WV_MENU_SEP4C, "<Separator>"),
+    WAVE_GTKIFE("/Edit/Add Time-Span Comment...",
+                NULL,
+                menu_add_time_span_comment,
+                WV_MENU_ADD_TIME_SPAN_COMMENT,
+                "<Item>"),
+    WAVE_GTKIFE("/Edit/Time-Span Comments...",
+                NULL,
+                menu_time_span_comments,
+                WV_MENU_TIME_SPAN_COMMENTS,
+                "<Item>"),
     WAVE_GTKIFE("/Edit/<separator>", NULL, NULL, WV_MENU_SEP5, "<Separator>"),
     WAVE_GTKIFE("/Edit/Data Format/Hex", "<Alt>X", menu_dataformat_hex, WV_MENU_EDFH, "<Item>"),
     WAVE_GTKIFE("/Edit/Data Format/Decimal", "<Alt>D", menu_dataformat_dec, WV_MENU_EDFD, "<Item>"),

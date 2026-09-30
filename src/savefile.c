@@ -13,6 +13,7 @@
 #include "lx2.h"
 #include "source_panel.h"
 #include "time_compress.h"
+#include "time_span_comments.h"
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
@@ -218,6 +219,15 @@ void write_save_helper(const char *savnam, FILE *wave)
                 "[compressed_span] %" GW_TIME_FORMAT " %" GW_TIME_FORMAT "\n",
                 span_start,
                 span_end);
+    }
+
+    for (guint i = 0; i < time_span_comments_count(); i++) {
+        const GwTimeSpanComment *c = time_span_comments_get(i);
+        fprintf(wave,
+                "[time_span_comment] %" GW_TIME_FORMAT " %" GW_TIME_FORMAT " \"%s\"\n",
+                c->start,
+                c->end,
+                c->text != NULL ? c->text : "");
     }
 
     if (GLOBALS->open_tree_nodes) {
@@ -800,6 +810,7 @@ int read_save_helper(char *wname,
         time_compress_clear(); /* stale spans from before this load shouldn't linger --
                                   real ones (if any) are re-added below via
                                   [compressed_span] lines as this file is parsed */
+        time_span_comments_clear(); /* same reasoning, for [time_span_comment] lines */
 
         rc = 0;
         GLOBALS->which_t_color = 0;
@@ -1510,6 +1521,20 @@ int parsewavline(char *w, char *alias, int depth)
             GwTime span_start = GW_TIME_CONSTANT(0), span_end = GW_TIME_CONSTANT(0);
             sscanf(w, "%" GW_TIME_FORMAT " %" GW_TIME_FORMAT, &span_start, &span_end);
             time_compress_add_span(span_start, span_end);
+        } else if (strcmp(w2, "time_span_comment") == 0) {
+            GwTime span_start = GW_TIME_CONSTANT(0), span_end = GW_TIME_CONSTANT(0);
+            sscanf(w, "%" GW_TIME_FORMAT " %" GW_TIME_FORMAT, &span_start, &span_end);
+
+            char *lhq = strchr(w, '"');
+            char *rhq = strrchr(w, '"');
+            if (lhq != NULL && rhq != NULL && lhq != rhq) {
+                char saved = *rhq;
+                *rhq = 0;
+                time_span_comments_add(span_start, span_end, lhq + 1);
+                *rhq = saved;
+            } else {
+                time_span_comments_add(span_start, span_end, "");
+            }
         } else if (strcmp(w2, "timestart") == 0) {
             sscanf(w, "%" GW_TIME_FORMAT, &GLOBALS->timestart_from_savefile);
             GLOBALS->timestart_from_savefile_valid = 2;

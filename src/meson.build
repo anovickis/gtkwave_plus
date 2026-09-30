@@ -69,6 +69,7 @@ gtkwave_sources = [
     'strace.c',
     'symbol.c',
     'time_compress.c',
+    'time_span_comments.c',
     'undo_stack.c',
     'tcl_helper.c',
     'timeentry.c',

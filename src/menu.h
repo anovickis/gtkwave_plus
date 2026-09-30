@@ -117,6 +117,9 @@ enum WV_MenuItems
     WV_MENU_SEP4B,
     WV_MENU_COMPRESS,
     WV_MENU_UNCOMPRESS,
+    WV_MENU_SEP4C,
+    WV_MENU_ADD_TIME_SPAN_COMMENT,
+    WV_MENU_TIME_SPAN_COMMENTS,
     WV_MENU_SEP5,
     WV_MENU_EDFH,
     WV_MENU_EDFD,
@@ -334,6 +337,8 @@ void menu_combine_down(gpointer null_data, guint callback_action, GtkWidget *wid
 void menu_combine_up(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_compress_time_range(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_uncompress_all(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_add_time_span_comment(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_time_span_comments(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_dataformat_hex(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_dataformat_dec(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_dataformat_signed(gpointer null_data, guint callback_action, GtkWidget *widget);
