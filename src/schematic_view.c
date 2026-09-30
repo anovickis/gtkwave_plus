@@ -7,6 +7,7 @@
 #include "globals.h"
 #include "netlist_query_ui.h"
 #include "signal_value_lookup.h"
+#include "currenttime.h"
 #include "status.h"
 
 // Pixel-space DPI used for both the displayed PNG and the coordinate math
@@ -82,6 +83,29 @@ static gchar *extract_leaf_name(const gchar *label)
     }
 
     return g_strndup(s, len);
+}
+
+// Edge labels use a different format than node labels for the same kind
+// of signal name -- "clk[0]"/"count_q[3:0]" (no space before the
+// bracket), vs. node labels' "count_q [3:0]" (space before it) -- so this
+// needs its own, simpler stripping rule rather than reusing
+// extract_leaf_name().
+static gchar *extract_edge_leaf_name(const gchar *label)
+{
+    if (label == NULL || label[0] == '\0') {
+        return NULL;
+    }
+
+    const gchar *bracket = strchr(label, '[');
+    gsize len = bracket != NULL ? (gsize)(bracket - label) : strlen(label);
+    while (len > 0 && label[len - 1] == ' ') {
+        len--;
+    }
+    if (len == 0) {
+        return NULL;
+    }
+
+    return g_strndup(label, len);
 }
 
 static gchar *dot_escape(const gchar *s)
@@ -161,6 +185,118 @@ annotate_dot(const gchar *dot_text, GHashTable *leaf_to_path, GwTime time, Value
 
     g_strfreev(lines);
     g_regex_unref(label_re);
+    return g_string_free(out, FALSE);
+}
+
+// Same "X-like"/"driven-high" ascii-value classification src/strace.c's
+// ST_X/ST_HIGH search types and src/list_x_view.c's scan already use, so
+// a net reads the same way here as it would in a Pattern Search or a List
+// X result. Returns NULL (meaning: leave the edge at Graphviz's own
+// default color) for a clean zero, an empty value, or don't-care -- so a
+// schematic full of idle nets doesn't turn into a wall of color, only the
+// notable ones do.
+static const gchar *edge_color_for_value(const gchar *value)
+{
+    if (value == NULL || value[0] == '\0') {
+        return NULL;
+    }
+
+    gboolean has_x = FALSE, has_z = FALSE, has_active = FALSE;
+    for (const gchar *p = value; *p != '\0'; p++) {
+        char c = *p;
+        if (c == 'x' || c == 'X' || c == 'w' || c == 'W') {
+            has_x = TRUE;
+        } else if (c == 'z' || c == 'Z') {
+            has_z = TRUE;
+        } else if ((c >= '1' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') ||
+                  c == 'h' || c == 'H') {
+            has_active = TRUE;
+        }
+    }
+
+    if (has_x) {
+        return "red";
+    }
+    if (has_z) {
+        return "darkorange";
+    }
+    if (has_active) {
+        return "forestgreen";
+    }
+    return NULL;
+}
+
+// Rewrites `Na -> Nb [label="TEXT"]` edge-definition lines, adding
+// color/penwidth attributes derived from the labeled signal's value at
+// `time` (see edge_color_for_value() above). Edges with no label (pure
+// control-flow edges between structural Assignment/Conditional nodes) or
+// whose label doesn't resolve to a real signal pass through unchanged,
+// same as annotate_dot()'s handling of structural nodes.
+static gchar *
+recolor_dot_edges(const gchar *dot_text, GHashTable *leaf_to_path, GwTime time, ValueLookupFunc lookup)
+{
+    GRegex *edge_re = g_regex_new(
+        "^(\\s*N\\d+\\s*->\\s*N\\d+\\s*)(\\[label=\"([^\"]*)\"\\])?(\\s*)$", 0, 0, NULL);
+    gchar **lines = g_strsplit(dot_text, "\n", -1);
+    GString *out = g_string_new(NULL);
+
+    for (guint i = 0; lines[i] != NULL; i++) {
+        if (i > 0) {
+            g_string_append_c(out, '\n');
+        }
+
+        GMatchInfo *match_info = NULL;
+        gboolean matched = g_regex_match(edge_re, lines[i], 0, &match_info);
+
+        if (matched) {
+            gchar *prefix = g_match_info_fetch(match_info, 1);
+            gchar *bracket = g_match_info_fetch(match_info, 2);
+            gchar *label = g_match_info_fetch(match_info, 3);
+            gchar *trailing = g_match_info_fetch(match_info, 4);
+            gboolean handled = FALSE;
+
+            if (bracket != NULL && bracket[0] != '\0' && label != NULL && label[0] != '\0') {
+                gchar *leaf = extract_edge_leaf_name(label);
+                if (leaf != NULL) {
+                    const gchar *full_path = g_hash_table_lookup(leaf_to_path, leaf);
+                    if (full_path != NULL) {
+                        gchar *value = lookup(full_path, time);
+                        const gchar *color = edge_color_for_value(value);
+                        if (color != NULL) {
+                            gchar *escaped_label = dot_escape(label);
+                            g_string_append_printf(out,
+                                                   "%s[label=\"%s\", color=\"%s\", penwidth=2]%s",
+                                                   prefix,
+                                                   escaped_label,
+                                                   color,
+                                                   trailing);
+                            g_free(escaped_label);
+                            handled = TRUE;
+                        }
+                        g_free(value);
+                    }
+                    g_free(leaf);
+                }
+            }
+
+            if (!handled) {
+                g_string_append_printf(out, "%s%s%s", prefix, bracket != NULL ? bracket : "",
+                                       trailing != NULL ? trailing : "");
+            }
+
+            g_free(prefix);
+            g_free(bracket);
+            g_free(label);
+            g_free(trailing);
+        } else {
+            g_string_append(out, lines[i]);
+        }
+
+        g_match_info_free(match_info);
+    }
+
+    g_strfreev(lines);
+    g_regex_unref(edge_re);
     return g_string_free(out, FALSE);
 }
 
@@ -563,8 +699,11 @@ static void refresh_schematic(SchematicState *state)
     GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
     GwTime cursor_time = gw_marker_get_position(primary_marker);
 
-    gchar *annotated = annotate_dot(dot, leaf_to_path, cursor_time, signal_value_at_time_g);
+    gchar *annotated_nodes = annotate_dot(dot, leaf_to_path, cursor_time, signal_value_at_time_g);
     g_free(dot);
+    gchar *annotated =
+        recolor_dot_edges(annotated_nodes, leaf_to_path, cursor_time, signal_value_at_time_g);
+    g_free(annotated_nodes);
 
     gchar *png_path = NULL;
     gboolean ok = run_dot_to_png(annotated, &png_path, &error);
@@ -630,6 +769,36 @@ static void on_marker_changed(GwProject *project, gpointer user_data)
     refresh_schematic((SchematicState *)user_data);
 }
 
+// Steps the annotated time to the root signal's next/previous real
+// transition, without leaving the schematic window: moves the primary
+// marker there (which on_marker_changed() above already re-renders on),
+// and redraws the main wave view too so both stay in sync.
+static void step_transition(SchematicState *state, gboolean forward)
+{
+    GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
+    GwTime current_time = gw_marker_is_enabled(primary_marker) ? gw_marker_get_position(primary_marker)
+                                                                : GLOBALS->tims.first;
+
+    GwTime new_time = signal_step_transition_time(state->signal_path, current_time, forward);
+
+    gw_marker_set_position(primary_marker, new_time);
+    gw_marker_set_enabled(primary_marker, TRUE);
+    update_time_box();
+    redraw_signals_and_waves();
+}
+
+static void on_prev_transition_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    step_transition((SchematicState *)user_data, FALSE);
+}
+
+static void on_next_transition_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    step_transition((SchematicState *)user_data, TRUE);
+}
+
 void netlist_query_show_schematic(const char *signal_path)
 {
     GtkWindow *parent = GLOBALS->mainwindow != NULL && GTK_IS_WINDOW(GLOBALS->mainwindow)
@@ -646,8 +815,27 @@ void netlist_query_show_schematic(const char *signal_path)
     gtk_window_set_default_size(GTK_WINDOW(window), 640, 480);
     g_free(title);
 
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
+
+    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(toolbar), 4);
+    gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
+
+    GtkWidget *prev_button = gtk_button_new_with_label("\xe2\x97\x80 Prev Transition");
+    gtk_widget_set_tooltip_text(
+        prev_button, "Move the marker to this signal's previous transition, without leaving the "
+                    "schematic");
+    gtk_box_pack_start(GTK_BOX(toolbar), prev_button, FALSE, FALSE, 0);
+
+    GtkWidget *next_button = gtk_button_new_with_label("Next Transition \xe2\x96\xb6");
+    gtk_widget_set_tooltip_text(
+        next_button, "Move the marker to this signal's next transition, without leaving the "
+                    "schematic");
+    gtk_box_pack_start(GTK_BOX(toolbar), next_button, FALSE, FALSE, 0);
+
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
-    gtk_container_add(GTK_CONTAINER(window), scrolled);
+    gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
 
     // The event box exists purely to receive button-press-event -- a
     // plain GtkImage doesn't have its own GdkWindow to route input
@@ -666,6 +854,9 @@ void netlist_query_show_schematic(const char *signal_path)
     state->marker_handler_id =
         g_signal_connect(GLOBALS->project, "unnamed-marker-changed",
                          G_CALLBACK(on_marker_changed), state);
+
+    g_signal_connect(prev_button, "clicked", G_CALLBACK(on_prev_transition_clicked), state);
+    g_signal_connect(next_button, "clicked", G_CALLBACK(on_next_transition_clicked), state);
 
     g_object_set_data_full(G_OBJECT(window), "schematic-state", state, schematic_state_free);
 

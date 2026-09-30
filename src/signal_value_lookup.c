@@ -60,3 +60,34 @@ gchar *signal_value_at_time(const gchar *signal_path, GwTime time)
 
     return local_trace_asciival(&temp, time);
 }
+
+GwTime signal_step_transition_time(const gchar *signal_path, GwTime time, gboolean forward)
+{
+    if (GLOBALS->dump_file == NULL) {
+        return time;
+    }
+
+    GwSymbol *sym = gw_dump_file_lookup_symbol(GLOBALS->dump_file, signal_path);
+    if (sym == NULL || sym->n == NULL) {
+        return time;
+    }
+
+    GwNode *node = sym->n;
+    ensure_harray(node);
+
+    if (forward) {
+        for (int i = 0; i < node->numhist; i++) {
+            if (node->harray[i]->time > time) {
+                return node->harray[i]->time;
+            }
+        }
+    } else {
+        for (int i = node->numhist - 1; i >= 0; i--) {
+            if (node->harray[i]->time < time) {
+                return node->harray[i]->time;
+            }
+        }
+    }
+
+    return time; /* no further transition in that direction */
+}
