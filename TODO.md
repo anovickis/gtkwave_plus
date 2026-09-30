@@ -192,33 +192,129 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   Ungroup removes the sentinels and correctly repoints every former
   member's `t_grp` to the outer group; confirmed the self-move guard
   rejects moving a group into itself without corrupting the list.
+- **Highlight incomplete/unresolved nets** (dashed line) in the
+  schematic. A node whose label names a real signal leaf but that
+  couldn't be resolved to a full path (e.g. it fell outside a depth/
+  module-boundary limit) was previously indistinguishable from a
+  genuinely structural node -- both just showed no value. New
+  `SchematicNodeInfo.unresolved` flag + `style=dashed` in
+  `annotate_dot()`, plus more accurate click/context-menu status
+  messages. Verified via the same standalone GLib-only test-harness
+  technique as the earlier edge-recoloring work, then fed through the
+  real `dot` binary to confirm valid syntax.
+- **Persist Compress Time Range spans across session save/reload.**
+  `GLOBALS->compressed_spans` was never wired into `savefile.c`, so the
+  whole feature evaporated the moment a session was saved and reopened.
+  New `[compressed_span] <start> <end>` directive, one line per span,
+  written/read the same way other whole-session globals are; old
+  savefiles without it just don't have the lines. Verified via gdb:
+  wrote two spans to a real temp file via `write_save_helper()`,
+  confirmed the exact directive lines, cleared state, reloaded via
+  `read_save_helper()`, confirmed both spans came back with exact
+  matching values.
+- **Expose bit-range querying in Show Drivers/Loads/Cone/Schematic.**
+  The netlist-query backend already accepted a bit-range-suffixed
+  signal_path with no code change needed -- this closed the missing UI
+  entry point. New optional "Bit range:" entry in the popover, shown
+  only for a bus/multi-bit target (covers both multi-bit
+  representations), appended onto the signal path when non-empty.
+  Verified via gdb: confirmed the range is appended correctly, confirmed
+  a real Drivers query succeeds with it applied (window titled
+  "Drivers of tb.dut.u_counter.count_q[2:1]"), confirmed an empty range
+  still queries the whole signal as before.
 
 ## Up next, in order
 
-1. **Highlight incomplete/unresolved nets** (dashed line) in the
-   schematic -- the clickable schematic's per-node metadata already exists
-   to hang this off of; low effort at this point.
+Re-ranked by value (not just effort) after a deliberate stock-take of
+everything shipped so far plus standard Verdi/nWave parity gaps -- see
+the conversation history for the full reasoning behind this ordering.
 
-2. **Struct/union display** (expandable field tree) and **derived/virtual
+1. **List X: scan the whole design hierarchy**, not just currently-
+   displayed traces. Today you must already suspect *and display* the
+   buggy signal before List X can find it, which defeats its actual
+   point (discovering unknown X sources you didn't know to look for).
+
+2. **Auto-detect the real DUT under a testbench wrapper** for the
+   gate-level schematic. Removes a near-universal first-use friction
+   point on an already-shipped feature -- most real designs are loaded
+   as full testbenches, not bare DUTs, and today that just fails with
+   the `$finish`-during-elaboration error.
+
+3. **Add an MCP server to gtkwave**, exposing the existing WCP command
+   set (add_items/add_markers/get_item_list/...) plus this session's new
+   netlist-query/schematic/search/List-X/bus-op backends as MCP tools.
+   Directly motivated by this session's own repeated pain: with no MCP
+   server, verifying new GUI features headlessly meant reverse-engineering
+   GTK internals via gdb forced-calls and breakpoint tricks every single
+   time. A real MCP server would let an AI agent (or any MCP client)
+   drive and query gtkwave directly and reliably instead. WCP is the
+   directly-analogous precedent (a similar JSON-over-socket control
+   protocol already exists and already covers a lot of the same ground),
+   so this is more "wrap and extend existing plumbing" than new
+   architecture -- moderate effort, unusually high value given how much
+   of this session's own friction it would have prevented.
+
+4. **Undo/redo (or at minimum a reversible soft-delete) for destructive
+   trace-list operations**: Ungroup, Delete, Combine, Expand. None of
+   this session's group/bus features have a safety net; one misclick
+   loses real organization work with no way back.
+
+5. **Bus Operations: a real Edit/Adjust Bus composition editor**
+   (reorder/add/remove constituent bits of an existing bus). Rounds out
+   the originally-scoped "Create/Edit/Adjust/Reverse Bus" item -- only
+   Expand-as-sub-bus and Reverse got built.
+
+6. **Waveform Compare / structured two-run diffing.** One of the most-
+   requested Verdi/nWave parity features. Big lift, big payoff.
+
+7. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-3. **Editable/exportable schematic mode** (reposition instances,
+8. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-4. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
-   but the highest-effort item here (needs a real sub-timestamp data
-   model, not just a UI); lowest priority-to-effort ratio on this list.
+9. **Verify Group Manager's renames/new structure round-trip through
+   save/reload.** Lower risk than the Compress Time Range persistence
+   gap since groups reuse existing trace-list save infra, but should be
+   explicitly checked, not assumed.
 
-## Noted, not detailed
+10. **Time-span Comments** (range annotations, distinct from point
+    markers) -- natural complement to markers/groups for documenting a
+    debug session.
 
-Auto Update (live-tail a still-running simulation), time-span Comments
-(distinct from point markers), Waveform Compare / structured two-run
-diffing, Dense Block Drawing (fast struct/MDA rendering), Analog Waveform
-view. Also still open from the original gap list: no source browsing
-beyond single-file cross-probe.
+11. **Compress Time Range: make touch-gesture pinch-zoom compression-
+    aware.** The one documented gap in that feature -- the existing
+    pinch-zoom math is self-referential and would need real algebraic
+    rework, not a mechanical substitution.
+
+12. **Auto Update** (live-tail a still-running simulation). A genuinely
+    different workflow (active-sim debugging vs. post-hoc analysis),
+    real nWave feature.
+
+13. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+    but needs a real new sub-timestamp data model; highest effort on
+    this list.
+
+14. **Source browsing beyond single-file cross-probe** -- multi-file/
+    project-wide source navigation.
+
+15. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+    scale feature for struct-heavy designs.
+
+16. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+    currently absent.
+
+17. **Compress Time Range: compression-aware page/scroll-increment
+    math.** Precision polish (paging jumps a slightly wrong amount
+    across a compressed span); low urgency.
+
+18. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+    decoder on top of the existing `TR_TTRANSLATED` transaction-trace
+    support). A genuinely new capability class; valuable but large,
+    speculative scope.
