@@ -16,10 +16,10 @@ typedef enum
 } GwNetlistQueryError;
 
 /*
- * One entry in a driver or load query result, mirroring the fields present
- * in a single slang-netlist `--drivers`/`--from` JSON array element. Not
- * every field is populated by every query kind -- see
- * gw_netlist_query_get_drivers()/gw_netlist_query_get_loads().
+ * One entry in a driver/load/fan-in query result, mirroring the fields
+ * present in a single slang-netlist JSON array element (`--drivers`,
+ * `--fan-out`, `--fan-in`). Not every field is populated by every query
+ * kind -- see gw_netlist_query_get_drivers()/get_loads()/get_fanin().
  */
 typedef struct
 {
@@ -84,8 +84,16 @@ GPtrArray *gw_netlist_query_get_drivers(GwNetlistQuery *self,
                                         GError **error);
 
 /* Same contract as gw_netlist_query_get_drivers(), reporting the
- * combinational fan-out (loads) of signal_path instead. */
+ * transitive combinational fan-out cone (every signal downstream of
+ * signal_path) instead. */
 GPtrArray *gw_netlist_query_get_loads(GwNetlistQuery *self,
+                                     const gchar *signal_path,
+                                     GError **error);
+
+/* Same contract as gw_netlist_query_get_drivers(), reporting the
+ * transitive combinational fan-in cone (the "cone of logic" -- every signal
+ * upstream of signal_path, stopping at register/port boundaries) instead. */
+GPtrArray *gw_netlist_query_get_fanin(GwNetlistQuery *self,
                                      const gchar *signal_path,
                                      GError **error);
 

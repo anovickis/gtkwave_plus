@@ -12,3 +12,7 @@ void netlist_query_show_drivers(const char *signal_path);
 
 // Same contract, showing the combinational fan-out (loads) instead.
 void netlist_query_show_loads(const char *signal_path);
+
+// Same contract, showing the transitive combinational fan-in cone (the
+// "cone of logic") instead.
+void netlist_query_show_cone(const char *signal_path);

@@ -101,6 +101,46 @@ static void test_get_loads(void)
     g_object_unref(query);
 }
 
+static void test_get_fanin(void)
+{
+    if (skip_if_no_binary()) {
+        return;
+    }
+
+    GwNetlistQuery *query = new_query_for_test_design();
+
+    GError *error = NULL;
+    GPtrArray *edges = gw_netlist_query_get_fanin(query, "top.u_counter.count_q", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(edges);
+    // The register's own clock/reset/enable control signals should all show
+    // up in its fan-in cone.
+    g_assert_cmpuint(edges->len, >=, 3);
+
+    gboolean saw_clk = FALSE;
+    gboolean saw_rst_n = FALSE;
+    gboolean saw_en = FALSE;
+    for (guint i = 0; i < edges->len; i++) {
+        GwNetlistEdge *edge = g_ptr_array_index(edges, i);
+        g_assert_nonnull(edge->path);
+        g_assert_nonnull(edge->location);
+
+        if (g_str_equal(edge->path, "top.u_counter.clk")) {
+            saw_clk = TRUE;
+        } else if (g_str_equal(edge->path, "top.u_counter.rst_n")) {
+            saw_rst_n = TRUE;
+        } else if (g_str_equal(edge->path, "top.u_counter.en")) {
+            saw_en = TRUE;
+        }
+    }
+    g_assert_true(saw_clk);
+    g_assert_true(saw_rst_n);
+    g_assert_true(saw_en);
+
+    g_ptr_array_unref(edges);
+    g_object_unref(query);
+}
+
 static void test_spawn_failure_reports_error(void)
 {
     // Doesn't need slang-netlist installed -- this exercises the failure
@@ -123,6 +163,7 @@ int main(int argc, char *argv[])
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/netlist_query/get_drivers", test_get_drivers);
     g_test_add_func("/netlist_query/get_loads", test_get_loads);
+    g_test_add_func("/netlist_query/get_fanin", test_get_fanin);
     g_test_add_func("/netlist_query/spawn_failure_reports_error",
                     test_spawn_failure_reports_error);
     return g_test_run();

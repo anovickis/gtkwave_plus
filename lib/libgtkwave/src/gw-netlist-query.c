@@ -291,7 +291,30 @@ GPtrArray *gw_netlist_query_get_loads(GwNetlistQuery *self,
     g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
     g_return_val_if_fail(signal_path != NULL, NULL);
 
-    gchar *json_text = run_query(self, "--from", signal_path, error);
+    gchar *json_text = run_query(self, "--fan-out", signal_path, error);
+    if (json_text == NULL) {
+        return NULL;
+    }
+
+    static const FieldMapping mapping[] = {
+        {"name", "path"},
+        {"location", "location"},
+        {NULL, NULL},
+    };
+
+    GPtrArray *edges = parse_edges(json_text, mapping, error);
+    g_free(json_text);
+    return edges;
+}
+
+GPtrArray *gw_netlist_query_get_fanin(GwNetlistQuery *self,
+                                     const gchar *signal_path,
+                                     GError **error)
+{
+    g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
+    g_return_val_if_fail(signal_path != NULL, NULL);
+
+    gchar *json_text = run_query(self, "--fan-in", signal_path, error);
     if (json_text == NULL) {
         return NULL;
     }

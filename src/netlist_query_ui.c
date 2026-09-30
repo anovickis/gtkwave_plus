@@ -293,7 +293,27 @@ static void append_edge_row(GtkWidget *listbox, GwNetlistEdge *edge, gboolean is
     gtk_list_box_insert(GTK_LIST_BOX(listbox), row_box, -1);
 }
 
-static void run_query_and_show(const gchar *signal_path, gboolean drivers)
+typedef enum
+{
+    QUERY_KIND_DRIVERS,
+    QUERY_KIND_LOADS,
+    QUERY_KIND_FANIN,
+} QueryKind;
+
+static const gchar *query_kind_noun(QueryKind kind)
+{
+    switch (kind) {
+    case QUERY_KIND_DRIVERS:
+        return "Drivers";
+    case QUERY_KIND_LOADS:
+        return "Loads";
+    case QUERY_KIND_FANIN:
+        return "Cone of Logic";
+    }
+    g_assert_not_reached();
+}
+
+static void run_query_and_show(const gchar *signal_path, QueryKind kind)
 {
     GtkWindow *parent =
         GLOBALS->mainwindow != NULL && GTK_IS_WINDOW(GLOBALS->mainwindow)
@@ -310,8 +330,18 @@ static void run_query_and_show(const gchar *signal_path, gboolean drivers)
                              GLOBALS->netlist_top_module);
 
     GError *error = NULL;
-    GPtrArray *edges = drivers ? gw_netlist_query_get_drivers(query, signal_path, &error)
-                              : gw_netlist_query_get_loads(query, signal_path, &error);
+    GPtrArray *edges = NULL;
+    switch (kind) {
+    case QUERY_KIND_DRIVERS:
+        edges = gw_netlist_query_get_drivers(query, signal_path, &error);
+        break;
+    case QUERY_KIND_LOADS:
+        edges = gw_netlist_query_get_loads(query, signal_path, &error);
+        break;
+    case QUERY_KIND_FANIN:
+        edges = gw_netlist_query_get_fanin(query, signal_path, &error);
+        break;
+    }
 
     g_object_unref(query);
 
@@ -325,14 +355,17 @@ static void run_query_and_show(const gchar *signal_path, gboolean drivers)
         return;
     }
 
-    gchar *title = g_strdup_printf("%s of %s", drivers ? "Drivers" : "Loads", signal_path);
+    gchar *title = g_strdup_printf("%s of %s", query_kind_noun(kind), signal_path);
     GtkWidget *listbox = NULL;
     GtkWidget *window = make_results_window(title, &listbox);
     g_free(title);
 
+    gboolean is_driver = (kind == QUERY_KIND_DRIVERS);
+
     if (edges->len == 0) {
-        GtkWidget *empty_label =
-            gtk_label_new(drivers ? "No drivers found." : "No loads found.");
+        gchar *empty_text = g_strdup_printf("No %s found.", query_kind_noun(kind));
+        GtkWidget *empty_label = gtk_label_new(empty_text);
+        g_free(empty_text);
         gtk_widget_set_margin_start(empty_label, 8);
         gtk_widget_set_margin_end(empty_label, 8);
         gtk_widget_set_margin_top(empty_label, 8);
@@ -340,7 +373,7 @@ static void run_query_and_show(const gchar *signal_path, gboolean drivers)
         gtk_list_box_insert(GTK_LIST_BOX(listbox), empty_label, -1);
     } else {
         for (guint i = 0; i < edges->len; i++) {
-            append_edge_row(listbox, g_ptr_array_index(edges, i), drivers);
+            append_edge_row(listbox, g_ptr_array_index(edges, i), is_driver);
         }
     }
 
@@ -351,10 +384,15 @@ static void run_query_and_show(const gchar *signal_path, gboolean drivers)
 
 void netlist_query_show_drivers(const char *signal_path)
 {
-    run_query_and_show(signal_path, TRUE);
+    run_query_and_show(signal_path, QUERY_KIND_DRIVERS);
 }
 
 void netlist_query_show_loads(const char *signal_path)
 {
-    run_query_and_show(signal_path, FALSE);
+    run_query_and_show(signal_path, QUERY_KIND_LOADS);
+}
+
+void netlist_query_show_cone(const char *signal_path)
+{
+    run_query_and_show(signal_path, QUERY_KIND_FANIN);
 }

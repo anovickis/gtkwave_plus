@@ -151,6 +151,20 @@ static void on_show_loads_clicked(GtkButton *button, gpointer user_data)
     netlist_query_show_loads(t->name_full);
 }
 
+static void on_show_cone_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    close_ancestor_popover(GTK_WIDGET(button));
+
+    if (t == NULL) {
+        status_text("GTKWAVE | Select a signal first to show its cone of logic.\n");
+        return;
+    }
+    netlist_query_show_cone(t->name_full);
+}
+
 static void add_section_label(GtkWidget *box, const char *text)
 {
     gchar *markup = g_markup_printf_escaped("<b>%s</b>", text);
@@ -218,6 +232,10 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     GtkWidget *loads_button = gtk_button_new_with_label("Show Loads");
     g_signal_connect(loads_button, "clicked", G_CALLBACK(on_show_loads_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(netlist_box), loads_button, TRUE, TRUE, 0);
+
+    GtkWidget *cone_button = gtk_button_new_with_label("Show Cone of Logic");
+    g_signal_connect(cone_button, "clicked", G_CALLBACK(on_show_cone_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(netlist_box), cone_button, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), netlist_box, FALSE, FALSE, 0);
 
