@@ -239,6 +239,7 @@ static const struct Global globals_base_values = {
     NULL, /* source_highlight_tag */
     NULL, /* source_last_path */
     0, /* source_last_highlighted_line */
+    NULL, /* source_value_anchors */
     NULL, /* marker_panel_root */
     NULL, /* marker_panel_rows */
     FALSE, /* marker_panel_visible */

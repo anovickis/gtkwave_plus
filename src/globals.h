@@ -268,6 +268,7 @@ struct Global
     GtkTextTag *source_highlight_tag;
     char *source_last_path; /* cached, avoids re-reading the file on every click */
     guint source_last_highlighted_line;
+    GPtrArray *source_value_anchors; /* GtkTextChildAnchor*, non-owning; from source_panel.c */
     GtkWidget *marker_panel_root; /* top-level widget shown/hidden as a unit, from marker_panel.c */
     GPtrArray *marker_panel_rows; /* one GwMarkerPanelRow* per named marker, from marker_panel.c */
     gboolean marker_panel_visible;

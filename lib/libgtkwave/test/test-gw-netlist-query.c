@@ -1,4 +1,5 @@
 #include <gtkwave.h>
+#include <string.h>
 
 /*
  * These tests exercise the real slang-netlist subprocess end-to-end
@@ -141,6 +142,29 @@ static void test_get_fanin(void)
     g_object_unref(query);
 }
 
+static void test_get_cone_dot(void)
+{
+    if (skip_if_no_binary()) {
+        return;
+    }
+
+    GwNetlistQuery *query = new_query_for_test_design();
+
+    GError *error = NULL;
+    gchar *dot = gw_netlist_query_get_cone_dot(query, "top.u_counter.count_q", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(dot);
+    g_assert_true(g_str_has_prefix(dot, "digraph"));
+    // Node/edge lines should be present for the register's own control
+    // signals, same as the flat fan-in query.
+    g_assert_nonnull(strstr(dot, "clk"));
+    g_assert_nonnull(strstr(dot, "rst_n"));
+    g_assert_nonnull(strstr(dot, "->"));
+
+    g_free(dot);
+    g_object_unref(query);
+}
+
 static void test_spawn_failure_reports_error(void)
 {
     // Doesn't need slang-netlist installed -- this exercises the failure
@@ -164,6 +188,7 @@ int main(int argc, char *argv[])
     g_test_add_func("/netlist_query/get_drivers", test_get_drivers);
     g_test_add_func("/netlist_query/get_loads", test_get_loads);
     g_test_add_func("/netlist_query/get_fanin", test_get_fanin);
+    g_test_add_func("/netlist_query/get_cone_dot", test_get_cone_dot);
     g_test_add_func("/netlist_query/spawn_failure_reports_error",
                     test_spawn_failure_reports_error);
     return g_test_run();

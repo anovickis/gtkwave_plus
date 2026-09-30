@@ -97,4 +97,14 @@ GPtrArray *gw_netlist_query_get_fanin(GwNetlistQuery *self,
                                      const gchar *signal_path,
                                      GError **error);
 
+/*
+ * Returns the fan-in cone of signal_path as raw Graphviz DOT text (node
+ * names are slang-netlist's own generic labels, e.g. "In port clk" or
+ * "count_q [3:0]" -- not gtkwave hierarchical paths), or NULL on error with
+ * error set. Caller frees the returned string with g_free().
+ */
+gchar *gw_netlist_query_get_cone_dot(GwNetlistQuery *self,
+                                    const gchar *signal_path,
+                                    GError **error);
+
 G_END_DECLS

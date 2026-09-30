@@ -109,7 +109,7 @@ static void on_choose_files_clicked(GtkButton *button, gpointer user_data)
 // Returns TRUE once GLOBALS->netlist_source_files/netlist_top_module are
 // both set, prompting the user if they aren't yet. FALSE if the user
 // cancels or never provides valid input.
-static gboolean ensure_config(GtkWindow *parent)
+gboolean netlist_query_ensure_config(GtkWindow *parent)
 {
     if (GLOBALS->netlist_source_files != NULL && GLOBALS->netlist_source_files->len > 0 &&
         GLOBALS->netlist_top_module != NULL) {
@@ -309,8 +309,19 @@ static const gchar *query_kind_noun(QueryKind kind)
         return "Loads";
     case QUERY_KIND_FANIN:
         return "Cone of Logic";
+    default:
+        g_assert_not_reached();
     }
-    g_assert_not_reached();
+}
+
+GwNetlistQuery *netlist_query_new_from_config(void)
+{
+    g_return_val_if_fail(GLOBALS->netlist_source_files != NULL, NULL);
+    g_return_val_if_fail(GLOBALS->netlist_top_module != NULL, NULL);
+
+    return gw_netlist_query_new((const gchar *const *)GLOBALS->netlist_source_files->pdata,
+                                GLOBALS->netlist_source_files->len,
+                                GLOBALS->netlist_top_module);
 }
 
 static void run_query_and_show(const gchar *signal_path, QueryKind kind)
@@ -320,14 +331,11 @@ static void run_query_and_show(const gchar *signal_path, QueryKind kind)
             ? GTK_WINDOW(GLOBALS->mainwindow)
             : NULL;
 
-    if (!ensure_config(parent)) {
+    if (!netlist_query_ensure_config(parent)) {
         return;
     }
 
-    GwNetlistQuery *query =
-        gw_netlist_query_new((const gchar *const *)GLOBALS->netlist_source_files->pdata,
-                             GLOBALS->netlist_source_files->len,
-                             GLOBALS->netlist_top_module);
+    GwNetlistQuery *query = netlist_query_new_from_config();
 
     GError *error = NULL;
     GPtrArray *edges = NULL;
@@ -341,6 +349,8 @@ static void run_query_and_show(const gchar *signal_path, QueryKind kind)
     case QUERY_KIND_FANIN:
         edges = gw_netlist_query_get_fanin(query, signal_path, &error);
         break;
+    default:
+        g_assert_not_reached();
     }
 
     g_object_unref(query);

@@ -118,14 +118,11 @@ static gboolean ensure_binary_path(GwNetlistQuery *self, GError **error)
 }
 
 /*
- * Runs `slang-netlist <source files...> --top <top> <query_flag>
- * <signal_path> --format json` and returns its stdout, or NULL on error with
- * error set. Caller frees the returned string.
+ * Runs `slang-netlist <source files...> --top <top> <extra_args...>` and
+ * returns its stdout, or NULL on error with error set. extra_args is a
+ * NULL-terminated argv tail. Caller frees the returned string.
  */
-static gchar *run_query(GwNetlistQuery *self,
-                        const gchar *query_flag,
-                        const gchar *signal_path,
-                        GError **error)
+static gchar *run_argv(GwNetlistQuery *self, gchar *const *extra_args, GError **error)
 {
     if (!ensure_binary_path(self, error)) {
         return NULL;
@@ -138,10 +135,9 @@ static gchar *run_query(GwNetlistQuery *self,
     }
     g_ptr_array_add(argv, (gchar *)"--top");
     g_ptr_array_add(argv, self->top_module);
-    g_ptr_array_add(argv, (gchar *)query_flag);
-    g_ptr_array_add(argv, (gchar *)signal_path);
-    g_ptr_array_add(argv, (gchar *)"--format");
-    g_ptr_array_add(argv, (gchar *)"json");
+    for (guint i = 0; extra_args[i] != NULL; i++) {
+        g_ptr_array_add(argv, extra_args[i]);
+    }
     g_ptr_array_add(argv, NULL);
 
     gchar *out = NULL;
@@ -267,7 +263,9 @@ GPtrArray *gw_netlist_query_get_drivers(GwNetlistQuery *self,
     g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
     g_return_val_if_fail(signal_path != NULL, NULL);
 
-    gchar *json_text = run_query(self, "--drivers", signal_path, error);
+    gchar *extra_args[] = {(gchar *)"--drivers", (gchar *)signal_path, (gchar *)"--format",
+                          (gchar *)"json", NULL};
+    gchar *json_text = run_argv(self, extra_args, error);
     if (json_text == NULL) {
         return NULL;
     }
@@ -291,7 +289,9 @@ GPtrArray *gw_netlist_query_get_loads(GwNetlistQuery *self,
     g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
     g_return_val_if_fail(signal_path != NULL, NULL);
 
-    gchar *json_text = run_query(self, "--fan-out", signal_path, error);
+    gchar *extra_args[] = {(gchar *)"--fan-out", (gchar *)signal_path, (gchar *)"--format",
+                          (gchar *)"json", NULL};
+    gchar *json_text = run_argv(self, extra_args, error);
     if (json_text == NULL) {
         return NULL;
     }
@@ -314,7 +314,9 @@ GPtrArray *gw_netlist_query_get_fanin(GwNetlistQuery *self,
     g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
     g_return_val_if_fail(signal_path != NULL, NULL);
 
-    gchar *json_text = run_query(self, "--fan-in", signal_path, error);
+    gchar *extra_args[] = {(gchar *)"--fan-in", (gchar *)signal_path, (gchar *)"--format",
+                          (gchar *)"json", NULL};
+    gchar *json_text = run_argv(self, extra_args, error);
     if (json_text == NULL) {
         return NULL;
     }
@@ -328,4 +330,21 @@ GPtrArray *gw_netlist_query_get_fanin(GwNetlistQuery *self,
     GPtrArray *edges = parse_edges(json_text, mapping, error);
     g_free(json_text);
     return edges;
+}
+
+/*
+ * Returns the fan-in cone of signal_path as raw Graphviz DOT text (from
+ * slang-netlist's --netlist-dot), or NULL on error with error set. Caller
+ * frees the returned string.
+ */
+gchar *gw_netlist_query_get_cone_dot(GwNetlistQuery *self,
+                                    const gchar *signal_path,
+                                    GError **error)
+{
+    g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
+    g_return_val_if_fail(signal_path != NULL, NULL);
+
+    gchar *extra_args[] = {(gchar *)"--fan-in", (gchar *)signal_path, (gchar *)"--netlist-dot",
+                          (gchar *)"-", NULL};
+    return run_argv(self, extra_args, error);
 }

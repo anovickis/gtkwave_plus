@@ -105,7 +105,7 @@ static gchar *trace_flags_to_string(GwTrace *t)
     return g_string_free(str, FALSE);
 }
 
-static gchar *local_trace_asciival(GwTrace *t, GwTime tim)
+gchar *local_trace_asciival(GwTrace *t, GwTime tim)
 {
     if (t->name == NULL) {
         return NULL;
