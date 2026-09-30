@@ -135,32 +135,65 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   confirmed the sliced sub-bus's value exactly matches the corresponding
   bits of the source bus at a known time, and confirmed Reverse Bit Order
   flips it correctly.
+- **Compress Time Range.** Turned out to be far from "self-contained" --
+  investigated first and found gtkwave has no canonical time<->pixel
+  mapping function at all, just `(t - tims.start) * pxns`/
+  `tims.start + x * nspx` inlined ad hoc across ~15 files, 50+ call
+  sites, in 3-4 slightly different forms. Asked the user how to scope it
+  given that; they chose the full real feature. Introduced
+  `gw_time_to_pixel()`/`gw_pixel_to_time()` (`time_compress.c`/`.h`) as
+  the canonical piecewise mapping (falls back to the exact plain formula
+  when nothing's compressed, so it's a safe drop-in), and mechanically
+  replaced every call site that affects actual rendering or click/drag
+  position: the core trace-rendering loops
+  (`gw-wave-view-traces.c`), marker drawing and the actual
+  "where did the user click" resolver (`gw-wave-view.c`,
+  `wavewindow.c`'s `resolve_pixel_time()`), and the viewport-width-to-
+  end-time recompute that's the specific line making the same pixel
+  width show more time once compression is active. Deliberately left
+  page/scroll-increment math (a pre-existing bulk approximation, not a
+  per-pixel position) and touch-gesture pinch-zoom (self-referential,
+  would need real algebraic rework) uncompressed-approximate --
+  reasoned, documented scope boundaries, not oversights. New
+  Edit > Compress Time Range / Uncompress All menu items; compress
+  requires both primary and baseline markers set (span between them),
+  deliberately not defaulting to "compress everything" the way most
+  other primary<->baseline-ranged features in this app do when baseline
+  isn't set. Real gotcha hit along the way: `GLOBALS` is initialized
+  *positionally* in `globals.c`, not via designated initializers --
+  adding a new struct field without a matching positional entry shifted
+  every subsequent field by one slot, caught immediately by
+  `-Werror=int-conversion` as a wall of unrelated-looking errors rather
+  than silently corrupting state. Verified both mathematically (gdb,
+  exact round-trip of the new functions against real
+  `tims`/`pxns`/`nspx` values before/after adding a span) and visually
+  (real screenshot showing the "+" marker rendered correctly, and
+  confirmed `tims.end` -- how much timeline the same pixel-width
+  viewport shows -- grew by very close to the predicted amount after
+  compressing a 30-unit span to the 14px marker).
 
 ## Up next, in order
 
-1. **Compress Time Range**: collapse uninteresting time spans to a "+"
-   marker. Self-contained, no dependency on anything above.
-
-2. **Group Manager**: a real dialog for nested signal groups, bulk
+1. **Group Manager**: a real dialog for nested signal groups, bulk
    "move to group".
 
-3. **Highlight incomplete/unresolved nets** (dashed line) in the
+2. **Highlight incomplete/unresolved nets** (dashed line) in the
    schematic -- the clickable schematic's per-node metadata already exists
    to hang this off of; low effort at this point.
 
-4. **Struct/union display** (expandable field tree) and **derived/virtual
+3. **Struct/union display** (expandable field tree) and **derived/virtual
    signal expressions**. Bigger standalone features, no urgent driver
    from anything else on this list -- pick up when there's a specific
    need.
 
-5. **Editable/exportable schematic mode** (reposition instances,
+4. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
    schematic signal into the wave pane), **configurable color themes**,
    **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-6. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+5. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
    but the highest-effort item here (needs a real sub-timestamp data
    model, not just a UI); lowest priority-to-effort ratio on this list.
 
