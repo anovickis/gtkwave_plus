@@ -184,6 +184,7 @@ enum WV_MenuItems
     /* WV_MENU_CPA, */
     WV_MENU_TG,
     WV_MENU_AG,
+    WV_MENU_GROUP_MANAGER,
     WV_MENU_SEP6A1,
     WV_MENU_EHR,
     WV_MENU_EUHR,
@@ -418,6 +419,7 @@ void menu_lxt_clk_compress(gpointer null_data, guint callback_action, GtkWidget 
 void menu_version(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_expand(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_toggle_group(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_group_manager(gpointer null_data, guint callback_action, GtkWidget *widget);
 
 gtkwave_mlist_t *retrieve_menu_items_array(int *num_items);
 

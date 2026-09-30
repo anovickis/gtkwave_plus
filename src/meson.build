@@ -28,6 +28,7 @@ gtkwave_sources = [
     'fonts.c',
     'gconf.c',
     'globals.c',
+    'group_manager.c',
     'gtk23compat.c',
     'gw-mouseover.c',
     'gw-named-marker-dialog.c',

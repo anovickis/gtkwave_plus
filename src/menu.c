@@ -31,6 +31,7 @@
 #include "console_panel.h"
 #include "marker_panel.h"
 #include "source_panel.h"
+#include "group_manager.h"
 #include "list_x_view.h"
 #include "time_compress.h"
 #include <cocoa_misc.h>
@@ -1381,6 +1382,15 @@ void menu_create_group(gpointer null_data, guint callback_action, GtkWidget *wid
     } else {
         must_sel_bg();
     }
+}
+
+void menu_group_manager(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    group_manager_show();
 }
 
 static unsigned expand_trace(GwTrace *t_top)
@@ -5317,6 +5327,11 @@ static gtkwave_mlist_t menu_items[] = {
     /* 60 */
     WAVE_GTKIFE("/Edit/Toggle Group Open|Close", "T", menu_toggle_group, WV_MENU_TG, "<Item>"),
     WAVE_GTKIFE("/Edit/Create Group", "G", menu_create_group, WV_MENU_AG, "<Item>"),
+    WAVE_GTKIFE("/Edit/Group Manager...",
+                NULL,
+                menu_group_manager,
+                WV_MENU_GROUP_MANAGER,
+                "<Item>"),
     WAVE_GTKIFE("/Edit/<separator>", NULL, NULL, WV_MENU_SEP6A1, "<Separator>"),
     WAVE_GTKIFE("/Edit/Highlight Regexp", "<Alt>R", menu_regexp_highlight, WV_MENU_EHR, "<Item>"),
     WAVE_GTKIFE("/Edit/UnHighlight Regexp",
