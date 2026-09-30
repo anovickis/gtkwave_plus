@@ -239,22 +239,27 @@ static void on_location_clicked(GtkButton *button, gpointer user_data)
     jump_to_location((const gchar *)user_data);
 }
 
-static GtkWidget *make_results_window(const gchar *title, GtkWidget **out_listbox)
+static GtkWidget *make_results_window(const gchar *title, GtkWidget **out_listbox,
+                                     GtkWidget **out_vbox)
 {
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), title);
     gtk_window_set_default_size(GTK_WINDOW(window), 560, 360);
 
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
+
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(
         GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(window), scrolled);
+    gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
 
     GtkWidget *listbox = gtk_list_box_new();
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(listbox), GTK_SELECTION_NONE);
     gtk_container_add(GTK_CONTAINER(scrolled), listbox);
 
     *out_listbox = listbox;
+    *out_vbox = vbox;
     return window;
 }
 
@@ -324,6 +329,98 @@ GwNetlistQuery *netlist_query_new_from_config(void)
                                 GLOBALS->netlist_top_module);
 }
 
+typedef struct
+{
+    gchar *signal_path;
+    QueryKind kind;
+    GtkWidget *listbox;
+    GtkWidget *depth_spin; /* NULL for QUERY_KIND_DRIVERS, which has no limits */
+    GtkWidget *boundary_check; /* NULL likewise */
+} ResultsWindowState;
+
+static void results_window_state_free(gpointer data)
+{
+    ResultsWindowState *state = data;
+    g_free(state->signal_path);
+    g_free(state);
+}
+
+static void populate_results(ResultsWindowState *state)
+{
+    GList *children = gtk_container_get_children(GTK_CONTAINER(state->listbox));
+    for (GList *l = children; l != NULL; l = l->next) {
+        gtk_widget_destroy(GTK_WIDGET(l->data));
+    }
+    g_list_free(children);
+
+    GwNetlistQuery *query = netlist_query_new_from_config();
+
+    GwNetlistQueryLimits limits = {
+        .max_depth = state->depth_spin != NULL
+                       ? (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(state->depth_spin))
+                       : 0,
+        .module_boundary_only =
+            state->boundary_check != NULL &&
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(state->boundary_check)),
+    };
+
+    GError *error = NULL;
+    GPtrArray *edges = NULL;
+    switch (state->kind) {
+    case QUERY_KIND_DRIVERS:
+        edges = gw_netlist_query_get_drivers(query, state->signal_path, &error);
+        break;
+    case QUERY_KIND_LOADS:
+        edges = gw_netlist_query_get_loads_limited(query, state->signal_path, &limits, &error);
+        break;
+    case QUERY_KIND_FANIN:
+        edges = gw_netlist_query_get_fanin_limited(query, state->signal_path, &limits, &error);
+        break;
+    default:
+        g_assert_not_reached();
+    }
+
+    g_object_unref(query);
+
+    if (edges == NULL) {
+        gchar *msg = g_strdup_printf("GTKWAVE | Netlist query failed for '%s': %s\n",
+                                     state->signal_path,
+                                     error != NULL ? error->message : "unknown error");
+        status_text(msg);
+        g_free(msg);
+        g_clear_error(&error);
+        return;
+    }
+
+    gboolean is_driver = (state->kind == QUERY_KIND_DRIVERS);
+
+    if (edges->len == 0) {
+        gchar *empty_text = g_strdup_printf("No %s found (within the current limits).",
+                                            query_kind_noun(state->kind));
+        GtkWidget *empty_label = gtk_label_new(empty_text);
+        g_free(empty_text);
+        gtk_widget_set_margin_start(empty_label, 8);
+        gtk_widget_set_margin_end(empty_label, 8);
+        gtk_widget_set_margin_top(empty_label, 8);
+        gtk_widget_set_margin_bottom(empty_label, 8);
+        gtk_list_box_insert(GTK_LIST_BOX(state->listbox), empty_label, -1);
+    } else {
+        for (guint i = 0; i < edges->len; i++) {
+            append_edge_row(state->listbox, g_ptr_array_index(edges, i), is_driver);
+        }
+    }
+
+    g_ptr_array_unref(edges);
+
+    gtk_widget_show_all(state->listbox);
+}
+
+static void on_refresh_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    populate_results((ResultsWindowState *)user_data);
+}
+
 static void run_query_and_show(const gchar *signal_path, QueryKind kind)
 {
     GtkWindow *parent =
@@ -335,59 +432,54 @@ static void run_query_and_show(const gchar *signal_path, QueryKind kind)
         return;
     }
 
-    GwNetlistQuery *query = netlist_query_new_from_config();
-
-    GError *error = NULL;
-    GPtrArray *edges = NULL;
-    switch (kind) {
-    case QUERY_KIND_DRIVERS:
-        edges = gw_netlist_query_get_drivers(query, signal_path, &error);
-        break;
-    case QUERY_KIND_LOADS:
-        edges = gw_netlist_query_get_loads(query, signal_path, &error);
-        break;
-    case QUERY_KIND_FANIN:
-        edges = gw_netlist_query_get_fanin(query, signal_path, &error);
-        break;
-    default:
-        g_assert_not_reached();
-    }
-
-    g_object_unref(query);
-
-    if (edges == NULL) {
-        gchar *msg = g_strdup_printf("GTKWAVE | Netlist query failed for '%s': %s\n",
-                                     signal_path,
-                                     error != NULL ? error->message : "unknown error");
-        status_text(msg);
-        g_free(msg);
-        g_clear_error(&error);
-        return;
-    }
-
     gchar *title = g_strdup_printf("%s of %s", query_kind_noun(kind), signal_path);
     GtkWidget *listbox = NULL;
-    GtkWidget *window = make_results_window(title, &listbox);
+    GtkWidget *vbox = NULL;
+    GtkWidget *window = make_results_window(title, &listbox, &vbox);
     g_free(title);
 
-    gboolean is_driver = (kind == QUERY_KIND_DRIVERS);
+    ResultsWindowState *state = g_new0(ResultsWindowState, 1);
+    state->signal_path = g_strdup(signal_path);
+    state->kind = kind;
+    state->listbox = listbox;
 
-    if (edges->len == 0) {
-        gchar *empty_text = g_strdup_printf("No %s found.", query_kind_noun(kind));
-        GtkWidget *empty_label = gtk_label_new(empty_text);
-        g_free(empty_text);
-        gtk_widget_set_margin_start(empty_label, 8);
-        gtk_widget_set_margin_end(empty_label, 8);
-        gtk_widget_set_margin_top(empty_label, 8);
-        gtk_widget_set_margin_bottom(empty_label, 8);
-        gtk_list_box_insert(GTK_LIST_BOX(listbox), empty_label, -1);
-    } else {
-        for (guint i = 0; i < edges->len; i++) {
-            append_edge_row(listbox, g_ptr_array_index(edges, i), is_driver);
-        }
+    // The fan-in/fan-out queries have no built-in bound and can return
+    // very large result sets on a real design -- give the depth/module-
+    // boundary limits a visible control here rather than a silent
+    // default. Drivers are already naturally single-level; no controls
+    // needed (and nothing to filter on -- driver edges carry no `path`).
+    if (kind == QUERY_KIND_LOADS || kind == QUERY_KIND_FANIN) {
+        GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_container_set_border_width(GTK_CONTAINER(controls), 4);
+
+        gtk_box_pack_start(GTK_BOX(controls), gtk_label_new("Max depth:"), FALSE, FALSE, 0);
+        GtkWidget *depth_spin = gtk_spin_button_new_with_range(0, 999, 1);
+        gtk_widget_set_tooltip_text(depth_spin,
+                                   "Hierarchy-tree distance from this signal to keep "
+                                   "(0 = unlimited)");
+        gtk_box_pack_start(GTK_BOX(controls), depth_spin, FALSE, FALSE, 0);
+
+        GtkWidget *boundary_check = gtk_check_button_new_with_label("Stop at module boundary");
+        gtk_widget_set_tooltip_text(
+            boundary_check, "Only show results in this signal's own immediate module instance");
+        gtk_box_pack_start(GTK_BOX(controls), boundary_check, FALSE, FALSE, 0);
+
+        GtkWidget *refresh_button = gtk_button_new_with_label("Refresh");
+        gtk_box_pack_start(GTK_BOX(controls), refresh_button, FALSE, FALSE, 0);
+
+        gtk_box_pack_start(GTK_BOX(vbox), controls, FALSE, FALSE, 0);
+        gtk_box_reorder_child(GTK_BOX(vbox), controls, 0);
+
+        state->depth_spin = depth_spin;
+        state->boundary_check = boundary_check;
+        g_signal_connect(refresh_button, "clicked", G_CALLBACK(on_refresh_clicked), state);
+        g_signal_connect(depth_spin, "activate", G_CALLBACK(on_refresh_clicked), state);
     }
 
-    g_ptr_array_unref(edges);
+    g_object_set_data_full(G_OBJECT(window), "results-window-state", state,
+                           results_window_state_free);
+
+    populate_results(state);
 
     gtk_widget_show_all(window);
 }

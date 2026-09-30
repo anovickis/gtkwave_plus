@@ -1,5 +1,6 @@
 #include "gw-netlist-query.h"
 #include <json-glib/json-glib.h>
+#include <string.h>
 
 // clang-format off
 G_DEFINE_QUARK(gw-netlist-query-error-quark, gw_netlist_query_error)
@@ -347,4 +348,101 @@ gchar *gw_netlist_query_get_cone_dot(GwNetlistQuery *self,
     gchar *extra_args[] = {(gchar *)"--fan-in", (gchar *)signal_path, (gchar *)"--netlist-dot",
                           (gchar *)"-", NULL};
     return run_argv(self, extra_args, error);
+}
+
+/*
+ * Tree distance between two dot-delimited hierarchical paths: the number
+ * of levels each diverges from their nearest common scope, summed. E.g.
+ * "tb.dut.u_counter.count_q" vs. "tb.dut.clk" share the common scope
+ * "tb.dut" (2 segments); "count_q" is 2 segments past that, "clk" is 1,
+ * so the distance is 3 -- real tree distance, not a raw dot-count of
+ * either path alone.
+ */
+static guint hierarchy_distance(const gchar *a, const gchar *b)
+{
+    gchar **parts_a = g_strsplit(a, ".", -1);
+    gchar **parts_b = g_strsplit(b, ".", -1);
+
+    guint common = 0;
+    while (parts_a[common] != NULL && parts_b[common] != NULL &&
+          g_str_equal(parts_a[common], parts_b[common])) {
+        common++;
+    }
+
+    guint len_a = g_strv_length(parts_a);
+    guint len_b = g_strv_length(parts_b);
+    guint distance = (len_a - common) + (len_b - common);
+
+    g_strfreev(parts_a);
+    g_strfreev(parts_b);
+    return distance;
+}
+
+/* TRUE if `path` lives in the same immediate parent scope as
+ * `signal_path` (i.e. everything but each one's own last dot-segment is
+ * identical) -- used for the "stop at module boundary" restriction. */
+static gboolean same_parent_scope(const gchar *signal_path, const gchar *path)
+{
+    const gchar *sig_last_dot = strrchr(signal_path, '.');
+    const gchar *path_last_dot = strrchr(path, '.');
+
+    gsize sig_len = sig_last_dot != NULL ? (gsize)(sig_last_dot - signal_path) : 0;
+    gsize path_len = path_last_dot != NULL ? (gsize)(path_last_dot - path) : 0;
+
+    if (sig_len != path_len) {
+        return FALSE;
+    }
+    return sig_len == 0 || strncmp(signal_path, path, sig_len) == 0;
+}
+
+static void apply_limits(GPtrArray *edges, const gchar *signal_path,
+                        const GwNetlistQueryLimits *limits)
+{
+    if (limits == NULL) {
+        return;
+    }
+
+    for (guint i = edges->len; i-- > 0;) {
+        GwNetlistEdge *edge = g_ptr_array_index(edges, i);
+        if (edge->path == NULL) {
+            continue; /* nothing to filter on; keep it */
+        }
+
+        gboolean keep = TRUE;
+        if (limits->module_boundary_only && !same_parent_scope(signal_path, edge->path)) {
+            keep = FALSE;
+        }
+        if (keep && limits->max_depth > 0 &&
+           hierarchy_distance(signal_path, edge->path) > limits->max_depth) {
+            keep = FALSE;
+        }
+
+        if (!keep) {
+            g_ptr_array_remove_index(edges, i);
+        }
+    }
+}
+
+GPtrArray *gw_netlist_query_get_loads_limited(GwNetlistQuery *self,
+                                             const gchar *signal_path,
+                                             const GwNetlistQueryLimits *limits,
+                                             GError **error)
+{
+    GPtrArray *edges = gw_netlist_query_get_loads(self, signal_path, error);
+    if (edges != NULL) {
+        apply_limits(edges, signal_path, limits);
+    }
+    return edges;
+}
+
+GPtrArray *gw_netlist_query_get_fanin_limited(GwNetlistQuery *self,
+                                             const gchar *signal_path,
+                                             const GwNetlistQueryLimits *limits,
+                                             GError **error)
+{
+    GPtrArray *edges = gw_netlist_query_get_fanin(self, signal_path, error);
+    if (edges != NULL) {
+        apply_limits(edges, signal_path, limits);
+    }
+    return edges;
 }

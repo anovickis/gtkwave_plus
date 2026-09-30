@@ -98,6 +98,43 @@ GPtrArray *gw_netlist_query_get_fanin(GwNetlistQuery *self,
                                      GError **error);
 
 /*
+ * Post-query result limits for get_loads_limited()/get_fanin_limited() --
+ * a scalability guard rail for the transitive queries, which have no
+ * built-in bound and can return very large result sets on a real (non-toy)
+ * design. Applied client-side, as a filter over the same flat result list
+ * get_loads()/get_fanin() already return (no slang-netlist changes).
+ */
+typedef struct
+{
+    /* Maximum hierarchy-tree distance from signal_path to keep, computed
+     * as (levels signal_path's own path diverges from the nearest common
+     * scope) + (levels the result's path diverges from it) -- i.e. actual
+     * tree distance, not a raw dot-count. 0 means unlimited. */
+    guint max_depth;
+
+    /* If TRUE, only keep results that share signal_path's immediate
+     * parent scope (i.e. stay within the same module instance signal_path
+     * itself lives in) -- a "stop at module boundary" restriction. */
+    gboolean module_boundary_only;
+} GwNetlistQueryLimits;
+
+/* Same contract as gw_netlist_query_get_loads(), with `limits` applied as
+ * a post-filter over the result (pass NULL for no filtering, identical to
+ * plain get_loads()). */
+GPtrArray *gw_netlist_query_get_loads_limited(GwNetlistQuery *self,
+                                             const gchar *signal_path,
+                                             const GwNetlistQueryLimits *limits,
+                                             GError **error);
+
+/* Same contract as gw_netlist_query_get_fanin(), with `limits` applied as
+ * a post-filter over the result (pass NULL for no filtering, identical to
+ * plain get_fanin()). */
+GPtrArray *gw_netlist_query_get_fanin_limited(GwNetlistQuery *self,
+                                             const gchar *signal_path,
+                                             const GwNetlistQueryLimits *limits,
+                                             GError **error);
+
+/*
  * Returns the fan-in cone of signal_path as raw Graphviz DOT text (node
  * names are slang-netlist's own generic labels, e.g. "In port clk" or
  * "count_q [3:0]" -- not gtkwave hierarchical paths), or NULL on error with

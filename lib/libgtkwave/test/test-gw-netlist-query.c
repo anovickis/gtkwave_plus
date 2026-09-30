@@ -142,6 +142,116 @@ static void test_get_fanin(void)
     g_object_unref(query);
 }
 
+static gboolean edges_contain(GPtrArray *edges, const gchar *path)
+{
+    for (guint i = 0; i < edges->len; i++) {
+        GwNetlistEdge *edge = g_ptr_array_index(edges, i);
+        if (edge->path != NULL && g_str_equal(edge->path, path)) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static void test_get_fanin_limited_max_depth(void)
+{
+    if (skip_if_no_binary()) {
+        return;
+    }
+
+    GwNetlistQuery *query = new_query_for_test_design();
+
+    GError *error = NULL;
+    GPtrArray *unlimited = gw_netlist_query_get_fanin(query, "top.u_counter.count_q", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(unlimited);
+    // Sanity check on the fixture: the cone reaches all the way out to
+    // top's own ports (distance 3 from top.u_counter.count_q), not just
+    // u_counter's local signals (distance <= 2) -- otherwise max_depth=2
+    // below wouldn't actually be excluding anything.
+    g_assert_true(edges_contain(unlimited, "top.clk"));
+
+    GwNetlistQueryLimits limits = {.max_depth = 2, .module_boundary_only = FALSE};
+    GPtrArray *limited =
+        gw_netlist_query_get_fanin_limited(query, "top.u_counter.count_q", &limits, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(limited);
+
+    // Distance 2 (same scope as count_q itself) survive...
+    g_assert_true(edges_contain(limited, "top.u_counter.clk"));
+    g_assert_true(edges_contain(limited, "top.u_counter.rst_n"));
+    g_assert_true(edges_contain(limited, "top.u_counter.en"));
+    // ...but distance-3 entries (one scope further out) are cut.
+    g_assert_false(edges_contain(limited, "top.clk"));
+    g_assert_false(edges_contain(limited, "top.rst_n"));
+    g_assert_false(edges_contain(limited, "top.enable"));
+    g_assert_cmpuint(limited->len, <, unlimited->len);
+
+    g_ptr_array_unref(unlimited);
+    g_ptr_array_unref(limited);
+    g_object_unref(query);
+}
+
+static void test_get_fanin_limited_module_boundary(void)
+{
+    if (skip_if_no_binary()) {
+        return;
+    }
+
+    GwNetlistQuery *query = new_query_for_test_design();
+
+    GError *error = NULL;
+    GwNetlistQueryLimits limits = {.max_depth = 0, .module_boundary_only = TRUE};
+    GPtrArray *limited =
+        gw_netlist_query_get_fanin_limited(query, "top.u_counter.count_q", &limits, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(limited);
+
+    // Same immediate scope as count_q ("top.u_counter") survives...
+    g_assert_true(edges_contain(limited, "top.u_counter.clk"));
+    g_assert_true(edges_contain(limited, "top.u_counter.rst_n"));
+    g_assert_true(edges_contain(limited, "top.u_counter.en"));
+    // ...but anything from the parent scope ("top") is excluded, even
+    // though it's electrically the same net one hop away.
+    g_assert_false(edges_contain(limited, "top.clk"));
+    g_assert_false(edges_contain(limited, "top.rst_n"));
+    g_assert_false(edges_contain(limited, "top.enable"));
+
+    g_ptr_array_unref(limited);
+    g_object_unref(query);
+}
+
+static void test_get_loads_limited_max_depth(void)
+{
+    if (skip_if_no_binary()) {
+        return;
+    }
+
+    GwNetlistQuery *query = new_query_for_test_design();
+
+    GError *error = NULL;
+    GPtrArray *unlimited = gw_netlist_query_get_loads(query, "top.u_counter.count_q", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(unlimited);
+    g_assert_true(edges_contain(unlimited, "top.value"));
+
+    GwNetlistQueryLimits limits = {.max_depth = 2, .module_boundary_only = FALSE};
+    GPtrArray *limited =
+        gw_netlist_query_get_loads_limited(query, "top.u_counter.count_q", &limits, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(limited);
+
+    // top.u_counter.count (distance 2, same scope as count_q) survives,
+    // but top.value (distance 3, one scope further out) is cut.
+    g_assert_true(edges_contain(limited, "top.u_counter.count"));
+    g_assert_false(edges_contain(limited, "top.value"));
+    g_assert_cmpuint(limited->len, <, unlimited->len);
+
+    g_ptr_array_unref(unlimited);
+    g_ptr_array_unref(limited);
+    g_object_unref(query);
+}
+
 static void test_get_cone_dot(void)
 {
     if (skip_if_no_binary()) {
@@ -187,7 +297,13 @@ int main(int argc, char *argv[])
     g_test_init(&argc, &argv, NULL);
     g_test_add_func("/netlist_query/get_drivers", test_get_drivers);
     g_test_add_func("/netlist_query/get_loads", test_get_loads);
+    g_test_add_func("/netlist_query/get_loads_limited_max_depth",
+                    test_get_loads_limited_max_depth);
     g_test_add_func("/netlist_query/get_fanin", test_get_fanin);
+    g_test_add_func("/netlist_query/get_fanin_limited_max_depth",
+                    test_get_fanin_limited_max_depth);
+    g_test_add_func("/netlist_query/get_fanin_limited_module_boundary",
+                    test_get_fanin_limited_module_boundary);
     g_test_add_func("/netlist_query/get_cone_dot", test_get_cone_dot);
     g_test_add_func("/netlist_query/spawn_failure_reports_error",
                     test_spawn_failure_reports_error);
