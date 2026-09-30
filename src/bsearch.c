@@ -167,12 +167,12 @@ GwVectorEnt *bsearch_vector(GwBitVector *b, GwTime key)
 
     if ((!GLOBALS->vmax_compare_pos_bsearch_c_1) ||
         (GLOBALS->vmax_compare_time_bsearch_c_1 < GW_TIME_CONSTANT(0))) {
-        /* ignore warning: array index of '1' indexes past the end of an array (that contains 1
-         * elements) [-Warray-bounds] */
-        /* because this array is allocated with size > that declared in the structure definition via
-         * end of structure malloc padding */
-        GLOBALS->vmax_compare_pos_bsearch_c_1 = b->vectors[1]; /* aix bsearch fix */
-        GLOBALS->vmax_compare_index = &(b->vectors[1]);
+        /* aix bsearch fix -- vectors[1] is the intended fallback, but a
+         * vector with only a single region (e.g. one that never transitions)
+         * has no index 1; fall back to the last valid index instead. */
+        int fallback_idx = (b->numregions > 1) ? 1 : 0;
+        GLOBALS->vmax_compare_pos_bsearch_c_1 = b->vectors[fallback_idx];
+        GLOBALS->vmax_compare_index = &(b->vectors[fallback_idx]);
     }
 
     while (GLOBALS->vmax_compare_pos_bsearch_c_1->next) /* non-RoSync dumper deglitching fix */
