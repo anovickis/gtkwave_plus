@@ -17,6 +17,7 @@ libgtkwave_public_sources = [
     'gw-loader.c',
     'gw-marker.c',
     'gw-named-markers.c',
+    'gw-netlist-query.c',
     'gw-node.c',
     'gw-project.c',
     'gw-stems.c',
@@ -55,6 +56,7 @@ libgtkwave_public_headers = [
     'gw-loader.h',
     'gw-marker.h',
     'gw-named-markers.h',
+    'gw-netlist-query.h',
     'gw-project.h',
     'gw-stems.h',
     'gw-string-table.h',
@@ -80,6 +82,7 @@ libgtkwave_private_sources = [
 libgtkwave_dependencies = [
     glib_dep,
     gobject_dep,
+    json_glib_dep,
     libghw_dep,
     libfst_dep,
     libjrb_dep,
