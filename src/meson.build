@@ -50,6 +50,7 @@ gtkwave_sources = [
     'regex.c',
     'renderopt.c',
     'savefile.c',
+    'gate_schematic_view.c',
     'schematic_view.c',
     'search.c',
     'shiftbuttons.c',
