@@ -11,6 +11,7 @@
 #include "menu.h"
 #include "netlist_query_ui.h"
 #include "schematic_view.h"
+#include "signal_event_report.h"
 #include "status.h"
 
 typedef void (*MenuAction)(gpointer, guint, GtkWidget *);
@@ -180,6 +181,14 @@ static void on_show_schematic_clicked(GtkButton *button, gpointer user_data)
     netlist_query_show_schematic(t->name_full);
 }
 
+static void on_show_event_report_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    close_ancestor_popover(GTK_WIDGET(button));
+    signal_event_report_show();
+}
+
 static void add_section_label(GtkWidget *box, const char *text)
 {
     gchar *markup = g_markup_printf_escaped("<b>%s</b>", text);
@@ -257,6 +266,11 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     gtk_box_pack_start(GTK_BOX(netlist_box), schematic_button, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), netlist_box, FALSE, FALSE, 0);
+
+    GtkWidget *event_report_button = gtk_button_new_with_label("Event Report");
+    g_signal_connect(
+        event_report_button, "clicked", G_CALLBACK(on_show_event_report_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(box), event_report_button, FALSE, FALSE, 0);
 
     gtk_container_add(GTK_CONTAINER(popover), box);
     gtk_widget_show_all(box);

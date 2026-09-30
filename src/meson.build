@@ -54,6 +54,7 @@ gtkwave_sources = [
     'search.c',
     'shiftbuttons.c',
     'showchange.c',
+    'signal_event_report.c',
     'signal_list.c',
     'signal_popover.c',
     'signal_value_lookup.c',
