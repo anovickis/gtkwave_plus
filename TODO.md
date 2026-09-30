@@ -328,6 +328,25 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   separately drive the GTK button-click handlers themselves (thin,
   low-risk wrappers around the same array ops already exercised
   directly) -- a deliberate scoping choice.
+- **Verified Group Manager's renames/nested-structure round-trip
+  through save/reload** -- and found a real bug doing it.
+  `show_rename_dialog()` freed a group's name with `g_free()` and
+  reassigned it with `g_strdup()`, but that field is allocated with
+  `malloc_2()` (`create_group()`, `src/menu.c`), which prepends its own
+  allocation-chain bookkeeping before the returned pointer -- freeing it
+  with plain `g_free()` corrupts the heap. Reproduced a real SIGABRT
+  ("double free or corruption") the first time this path ran under gdb:
+  renaming *any* group created via the normal "Group" menu action would
+  have corrupted the heap on the very first rename, in the released
+  build too, not just under gdb. Fixed with `free_2()`/`strdup_2()`, the
+  matching pair every other group-sentinel name in this codebase already
+  uses. Re-verified once fixed: built a real nested-group structure
+  (outer group containing a plain trace, a nested inner group, and
+  another plain trace) via `create_group()`, renamed the outer group,
+  wrote it to a real temp file via `write_save_helper()`, cleared all
+  traces, reloaded via `read_save_helper()`, and confirmed every trace's
+  name and the correct nested `t_grp` ancestor-chain pointers matched
+  the original structure exactly.
 
 ## Up next, in order
 
@@ -350,42 +369,37 @@ the conversation history for the full reasoning behind this ordering.
    opportunistically alongside other schematic work rather than as a
    standalone effort.
 
-4. **Verify Group Manager's renames/new structure round-trip through
-   save/reload.** Lower risk than the Compress Time Range persistence
-   gap since groups reuse existing trace-list save infra, but should be
-   explicitly checked, not assumed.
-
-5. **Time-span Comments** (range annotations, distinct from point
+4. **Time-span Comments** (range annotations, distinct from point
     markers) -- natural complement to markers/groups for documenting a
     debug session.
 
-6. **Compress Time Range: make touch-gesture pinch-zoom compression-
+5. **Compress Time Range: make touch-gesture pinch-zoom compression-
     aware.** The one documented gap in that feature -- the existing
     pinch-zoom math is self-referential and would need real algebraic
     rework, not a mechanical substitution.
 
-7. **Auto Update** (live-tail a still-running simulation). A genuinely
+6. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature.
 
-8. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+7. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-9. **Source browsing beyond single-file cross-probe** -- multi-file/
+8. **Source browsing beyond single-file cross-probe** -- multi-file/
     project-wide source navigation.
 
-10. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+9. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs.
 
-11. **Analog Waveform view** -- expected baseline EDA-viewer feature,
+10. **Analog Waveform view** -- expected baseline EDA-viewer feature,
     currently absent.
 
-12. **Compress Time Range: compression-aware page/scroll-increment
+11. **Compress Time Range: compression-aware page/scroll-increment
     math.** Precision polish (paging jumps a slightly wrong amount
     across a compressed span); low urgency.
 
-13. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+12. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
