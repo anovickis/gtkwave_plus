@@ -34,6 +34,7 @@
 #include "group_manager.h"
 #include "list_x_view.h"
 #include "time_compress.h"
+#include "undo_stack.h"
 #include <cocoa_misc.h>
 #include <assert.h>
 
@@ -1495,6 +1496,15 @@ static unsigned expand_trace(GwTrace *t_top)
     return dirty;
 }
 
+void menu_undo(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    undo_stack_undo();
+}
+
 void menu_expand(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
     (void)null_data;
@@ -1509,6 +1519,8 @@ void menu_expand(gpointer null_data, guint callback_action, GtkWidget *widget)
         dnd_error();
         return;
     } /* don't mess with sigs when dnd active */
+
+    undo_stack_push_snapshot();
 
     DEBUG(printf("Expand Traces\n"));
 
@@ -2206,6 +2218,9 @@ void menu_combine_down(gpointer null_data, guint callback_action, GtkWidget *wid
         dnd_error();
         return;
     } /* don't mess with sigs when dnd active */
+
+    undo_stack_push_snapshot();
+
     v = combine_traces(1, NULL); /* down */
 
     if (v) {
@@ -2243,6 +2258,9 @@ void menu_combine_up(gpointer null_data, guint callback_action, GtkWidget *widge
         dnd_error();
         return;
     } /* don't mess with sigs when dnd active */
+
+    undo_stack_push_snapshot();
+
     v = combine_traces(0, NULL); /* up */
 
     if (v) {
@@ -4697,6 +4715,8 @@ void menu_delete_traces(gpointer null_data, guint callback_action, GtkWidget *wi
 
     DEBUG(printf("Delete Traces\n"));
 
+    undo_stack_push_snapshot();
+
     num_cut = DeleteBuffer();
     if (num_cut) {
         redraw_signals_and_waves();
@@ -5059,6 +5079,8 @@ static gtkwave_mlist_t menu_items[] = {
                 menu_insert_analog_height_extension,
                 WV_MENU_EIA,
                 "<Item>"),
+
+    WAVE_GTKIFE("/Edit/Undo", "<Control>Z", menu_undo, WV_MENU_UNDO, "<Item>"),
 
 #ifdef MAC_INTEGRATION
     WAVE_GTKIFE("/Edit/Cut", NULL, menu_cut_traces, WV_MENU_EC, "<Item>"),

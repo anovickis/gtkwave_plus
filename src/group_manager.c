@@ -5,6 +5,7 @@
 #include "globals.h"
 #include "signalwindow.h"
 #include "status.h"
+#include "undo_stack.h"
 
 typedef struct
 {
@@ -247,6 +248,7 @@ static void on_ungroup_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     RowActionData *data = user_data;
+    undo_stack_push_snapshot();
     ungroup(data->target_begin);
     populate_listbox(data->listbox);
 }
