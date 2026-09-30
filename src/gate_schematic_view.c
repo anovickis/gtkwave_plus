@@ -9,21 +9,166 @@
 
 // Translates gtkwave's own dot-delimited hierarchical path (e.g.
 // "tb.dut.u_counter.count_q") into Yosys's `select` syntax
-// ("<top-module>/<relative.path>", e.g. "tb/dut.u_counter.count_q") --
-// Yosys elaborates the same top module gtkwave's waveform was dumped
-// from, so the hierarchy after the top-module name lines up directly,
-// same assumption already validated for slang-netlist's own naming.
-static gchar *make_yosys_select(const gchar *top_module, const gchar *signal_path)
+// ("<top-module>/<relative.path>", e.g. "top/u_counter.count_q"). Usually
+// `strip_prefix` is just `yosys_top_module` (Yosys elaborates the same
+// top module gtkwave's waveform was dumped from, so the hierarchy after
+// the top-module name lines up directly) -- but when the configured top
+// is really a testbench wrapper and `yosys_top_module` is the
+// auto-detected real DUT module instead, `strip_prefix` is the VCD-side
+// instance path leading to it (e.g. "tb.dut"), which is a different
+// string gtkwave's signal paths actually use.
+static gchar *make_yosys_select(const gchar *yosys_top_module, const gchar *strip_prefix,
+                                const gchar *signal_path)
 {
-    gchar *prefix = g_strconcat(top_module, ".", NULL);
+    gchar *prefix = g_strconcat(strip_prefix, ".", NULL);
     const gchar *rel = g_str_has_prefix(signal_path, prefix) ? signal_path + strlen(prefix)
                                                              : signal_path;
-    gchar *result = g_strconcat(top_module, "/", rel, NULL);
+    gchar *result = g_strconcat(yosys_top_module, "/", rel, NULL);
     g_free(prefix);
     return result;
 }
 
-static gboolean run_yosys(const gchar *select_expr, gchar **out_svg_path, GError **error)
+// Verilog/SystemVerilog keywords that could otherwise be mistaken for a
+// module-instance's type/instance name by find_dut_instance()'s plain-
+// text scan below.
+static const char *const sv_keywords[] = {
+    "if",      "else",      "begin",     "end",         "always",
+    "always_ff", "always_comb", "always_latch", "assign", "input",
+    "output",  "inout",     "logic",     "wire",        "reg",
+    "integer", "real",      "initial",   "function",    "endfunction",
+    "task",    "endtask",   "generate",  "endgenerate", "for",
+    "while",   "case",      "casex",     "casez",       "endcase",
+    "module",  "endmodule", "parameter", "localparam",  "typedef",
+    "struct",  "enum",      "union",     "packed",      "signed",
+    "unsigned", "posedge",  "negedge",   "default",     "return",
+    "genvar",  "event",     "time",      "bit",         "byte",
+    "shortint", "int",      "longint",   "string",      "void",
+    "static",  "automatic", "const",     "interface",   "endinterface",
+    "unique",  "priority",  NULL,
+};
+
+static gboolean is_sv_keyword(const gchar *token)
+{
+    for (int i = 0; sv_keywords[i] != NULL; i++) {
+        if (strcmp(token, sv_keywords[i]) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+// Best-effort plain-text scan for the first module instantiation inside
+// `wrapper_module`'s body across the configured source files, e.g. finds
+// "top dut (...);" inside "module tb; ... endmodule". Returns FALSE
+// (leaving the out-params untouched) if nothing matches -- the caller
+// treats that as "couldn't auto-detect", not a hard failure, and just
+// surfaces the original Yosys error unchanged. Deliberately scoped to the
+// common case (one real DUT instantiated directly in the testbench, no
+// generate blocks or instance arrays); doesn't need to be a real Verilog
+// parser since a miss just means no auto-detection, not a wrong answer.
+static gboolean find_dut_instance(const gchar *wrapper_module, gchar **out_module_type,
+                                  gchar **out_instance_name)
+{
+    if (GLOBALS->netlist_source_files == NULL) {
+        return FALSE;
+    }
+
+    gchar *escaped_wrapper = g_regex_escape_string(wrapper_module, -1);
+    gchar *module_pattern = g_strdup_printf("\\bmodule\\s+%s\\b", escaped_wrapper);
+    GRegex *module_re = g_regex_new(module_pattern, 0, 0, NULL);
+    g_free(module_pattern);
+    g_free(escaped_wrapper);
+
+    // id1 [ '#' '(' balanced-one-level ')' ] id2 '(' -- a module
+    // instantiation, with or without a parameter override block.
+    GRegex *inst_re = g_regex_new("\\b([A-Za-z_][A-Za-z0-9_$]*)\\s*"
+                                  "(?:#\\s*\\((?:[^()]|\\([^()]*\\))*\\)\\s*)?"
+                                  "([A-Za-z_][A-Za-z0-9_$]*)\\s*\\(",
+                                  0,
+                                  0,
+                                  NULL);
+
+    gboolean found = FALSE;
+
+    for (guint i = 0; i < GLOBALS->netlist_source_files->len && !found; i++) {
+        const gchar *path = g_ptr_array_index(GLOBALS->netlist_source_files, i);
+        gchar *contents = NULL;
+        if (!g_file_get_contents(path, &contents, NULL, NULL)) {
+            continue;
+        }
+
+        // Strip comments so they can't be mistaken for real code -- naive
+        // (doesn't understand strings containing "//"/"/*"), adequate for
+        // the common case this heuristic targets.
+        GRegex *block_comment_re = g_regex_new("/\\*.*?\\*/", G_REGEX_DOTALL, 0, NULL);
+        gchar *no_block_comments =
+            g_regex_replace_literal(block_comment_re, contents, -1, 0, " ", 0, NULL);
+        g_regex_unref(block_comment_re);
+        g_free(contents);
+
+        GRegex *line_comment_re = g_regex_new("//[^\\n]*", 0, 0, NULL);
+        gchar *clean =
+            g_regex_replace_literal(line_comment_re, no_block_comments, -1, 0, "", 0, NULL);
+        g_regex_unref(line_comment_re);
+        g_free(no_block_comments);
+
+        GMatchInfo *module_match = NULL;
+        if (g_regex_match(module_re, clean, 0, &module_match)) {
+            gint start_pos = 0;
+            g_match_info_fetch_pos(module_match, 0, &start_pos, NULL);
+
+            // Body ends at the next "endmodule" after the match --
+            // standard Verilog never nests module...endmodule.
+            const gchar *body_start = clean + start_pos;
+            const gchar *endmod = strstr(body_start, "endmodule");
+            gsize body_len = endmod != NULL ? (gsize)(endmod - body_start) : strlen(body_start);
+            gchar *body = g_strndup(body_start, body_len);
+
+            GMatchInfo *inst_match = NULL;
+            g_regex_match(inst_re, body, 0, &inst_match);
+            while (g_match_info_matches(inst_match)) {
+                gchar *type_candidate = g_match_info_fetch(inst_match, 1);
+                gchar *inst_candidate = g_match_info_fetch(inst_match, 2);
+
+                if (!is_sv_keyword(type_candidate) && !is_sv_keyword(inst_candidate)) {
+                    *out_module_type = type_candidate;
+                    *out_instance_name = inst_candidate;
+                    found = TRUE;
+                    break;
+                }
+
+                g_free(type_candidate);
+                g_free(inst_candidate);
+                g_match_info_next(inst_match, NULL);
+            }
+            g_match_info_free(inst_match);
+            g_free(body);
+        }
+        g_match_info_free(module_match);
+
+        g_free(clean);
+    }
+
+    g_regex_unref(module_re);
+    g_regex_unref(inst_re);
+    return found;
+}
+
+// Yosys's fixed error text for a `$finish`/`$stop` hit during its own
+// AST->RTLIL compilation -- the specific, recognizable symptom of trying
+// to synthesize a testbench (or a module only reachable through one)
+// rather than real RTL. Matching on it (rather than treating every
+// failure as "maybe a testbench") keeps genuine user errors surfacing
+// immediately instead of being masked by a confusing extra retry.
+static gboolean yosys_error_suggests_testbench(const gchar *message)
+{
+    return message != NULL &&
+          (strstr(message, "$finish' executed") != NULL ||
+           strstr(message, "$stop' executed") != NULL);
+}
+
+static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
+                          gchar **out_svg_path, GError **error)
 {
     gchar *svg_path = NULL;
     gint svg_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.svg", &svg_path, error);
@@ -38,7 +183,17 @@ static gboolean run_yosys(const gchar *select_expr, gchar **out_svg_path, GError
     g_unlink(svg_path);
     gchar *prefix = g_strdup(svg_path);
 
-    GString *script = g_string_new("read_verilog -sv");
+    // -defer: parse to an AST only, deferring actual AST->RTLIL
+    // compilation to the 'hierarchy' command below. Without it, a plain
+    // testbench file with an unguarded system task (e.g. `$finish` in an
+    // initial block with no non-constant dependencies) fails to even
+    // parse -- Yosys's frontend const-folds and "executes" such a block
+    // during compilation, regardless of which module -top later selects.
+    // -defer sidesteps that entirely: 'hierarchy -top' only compiles the
+    // modules actually reachable from the configured top, so a sibling
+    // testbench module that merely happens to sit in the same source
+    // file list never gets compiled (and never hit) at all.
+    GString *script = g_string_new("read_verilog -sv -defer");
     for (guint i = 0; i < GLOBALS->netlist_source_files->len; i++) {
         g_string_append_printf(
             script, " \"%s\"", (const gchar *)g_ptr_array_index(GLOBALS->netlist_source_files, i));
@@ -46,7 +201,7 @@ static gboolean run_yosys(const gchar *select_expr, gchar **out_svg_path, GError
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; flatten; opt; techmap; opt; "
                           "select %s %%ci*; show -format svg -prefix %s -notitle",
-                          GLOBALS->netlist_top_module,
+                          top_module,
                           select_expr,
                           prefix);
 
@@ -284,12 +439,36 @@ void netlist_query_show_gate_schematic(const char *signal_path)
         return;
     }
 
-    gchar *select_expr = make_yosys_select(GLOBALS->netlist_top_module, signal_path);
+    const gchar *top_module = GLOBALS->netlist_top_module;
+    gchar *select_expr = make_yosys_select(top_module, top_module, signal_path);
 
     GError *error = NULL;
     gchar *svg_path = NULL;
-    gboolean ok = run_yosys(select_expr, &svg_path, &error);
+    gboolean ok = run_yosys(top_module, select_expr, &svg_path, &error);
     g_free(select_expr);
+
+    // The configured top is very often the VCD's own dump-root scope
+    // (see guess_top_module() in netlist_query_ui.c), which for a design
+    // loaded as a full testbench is the testbench itself -- not
+    // synthesizable RTL. If that's exactly why Yosys failed, try again
+    // against the real DUT it most likely instantiates, auto-detected
+    // from the source text, before giving up.
+    gboolean auto_detected = FALSE;
+    gchar *detected_module_type = NULL;
+    gchar *detected_instance_name = NULL;
+
+    if (!ok && yosys_error_suggests_testbench(error->message) &&
+        find_dut_instance(top_module, &detected_module_type, &detected_instance_name)) {
+        g_clear_error(&error);
+
+        gchar *instance_prefix = g_strconcat(top_module, ".", detected_instance_name, NULL);
+        gchar *retry_select = make_yosys_select(detected_module_type, instance_prefix, signal_path);
+        g_free(instance_prefix);
+
+        ok = run_yosys(detected_module_type, retry_select, &svg_path, &error);
+        g_free(retry_select);
+        auto_detected = ok;
+    }
 
     if (!ok) {
         gchar *msg = g_strdup_printf("GTKWAVE | Gate-level schematic failed for '%s': %s\n",
@@ -298,8 +477,24 @@ void netlist_query_show_gate_schematic(const char *signal_path)
         status_text(msg);
         g_free(msg);
         g_clear_error(&error);
+        g_free(detected_module_type);
+        g_free(detected_instance_name);
         return;
     }
+
+    if (auto_detected) {
+        gchar *msg = g_strdup_printf(
+            "GTKWAVE | '%s' isn't synthesizable RTL (likely a testbench) -- "
+            "used auto-detected DUT '%s' (instance '%s.%s') instead.\n",
+            top_module,
+            detected_module_type,
+            top_module,
+            detected_instance_name);
+        status_text(msg);
+        g_free(msg);
+    }
+    g_free(detected_module_type);
+    g_free(detected_instance_name);
 
     gchar *png_path = NULL;
     ok = render_svg_to_png(svg_path, &png_path, &error);
