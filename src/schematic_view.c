@@ -23,7 +23,15 @@ typedef struct
     gchar *id; /* Graphviz node id, e.g. "N22" */
     gchar *label; /* original (pre-annotation) label text */
     gchar *full_path; /* resolved gtkwave signal path, or NULL if this is
-                       a structural (Assignment/Conditional) node */
+                       a structural (Assignment/Conditional) node, OR if
+                       unresolved is TRUE below */
+    gboolean unresolved; /* TRUE if this node's label names a real signal
+                          leaf (extract_leaf_name() found one) but
+                          leaf_to_path couldn't resolve it to a full path --
+                          distinct from a genuinely structural node, which
+                          has no leaf name at all. Rendered with a dashed
+                          border (see annotate_dot()) so an incomplete net
+                          is visually distinguishable from a normal one. */
     gdouble x, y; /* pixel-space top-left corner */
     gdouble w, h; /* pixel-space size */
 } SchematicNodeInfo;
@@ -133,6 +141,12 @@ typedef gchar *(*ValueLookupFunc)(const gchar *signal_path, GwTime time);
 // don't match this shape (edges, graph attributes, ...) pass through
 // unchanged. Exposed with an injectable `lookup` so the rewriting logic
 // itself is testable without a loaded waveform.
+//
+// A node whose label names a real signal leaf but that leaf_to_path
+// couldn't resolve (as opposed to a genuinely structural
+// Assignment/Conditional node, which has no leaf name at all) gets a
+// dashed border instead of a value annotation -- "incomplete/unresolved
+// net", surfaced visually rather than just silently showing no value.
 static gchar *
 annotate_dot(const gchar *dot_text, GHashTable *leaf_to_path, GwTime time, ValueLookupFunc lookup)
 {
@@ -155,16 +169,21 @@ annotate_dot(const gchar *dot_text, GHashTable *leaf_to_path, GwTime time, Value
             gchar *suffix = g_match_info_fetch(match_info, 3);
             gchar *leaf = extract_leaf_name(label);
             gchar *value = NULL;
+            gboolean unresolved = FALSE;
 
             if (leaf != NULL) {
                 const gchar *full_path = g_hash_table_lookup(leaf_to_path, leaf);
                 if (full_path != NULL) {
                     value = lookup(full_path, time);
+                } else {
+                    unresolved = TRUE;
                 }
                 g_free(leaf);
             }
 
-            if (value != NULL) {
+            if (unresolved) {
+                g_string_append_printf(out, "%s%s\", style=dashed]", prefix, label);
+            } else if (value != NULL) {
                 gchar *escaped_value = dot_escape(value);
                 g_string_append_printf(out, "%s%s\\n= %s%s", prefix, label, escaped_value, suffix);
                 g_free(escaped_value);
@@ -541,7 +560,12 @@ parse_plain_nodes(const gchar *plain_text, GHashTable *id_to_label, GHashTable *
 
             gchar *leaf = extract_leaf_name(info->label);
             if (leaf != NULL) {
-                info->full_path = g_strdup(g_hash_table_lookup(leaf_to_path, leaf));
+                const gchar *path = g_hash_table_lookup(leaf_to_path, leaf);
+                if (path != NULL) {
+                    info->full_path = g_strdup(path);
+                } else {
+                    info->unresolved = TRUE;
+                }
                 g_free(leaf);
             }
 
@@ -624,6 +648,11 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
     if (event->button == 3) {
         if (node->full_path != NULL) {
             show_node_context_menu(node, event);
+        } else if (node->unresolved) {
+            status_text(
+                "GTKWAVE | (unresolved net -- slang-netlist named a signal here that "
+                "couldn't be matched to a full path, e.g. due to depth/module-boundary "
+                "limits -- no signal to query)\n");
         } else {
             status_text("GTKWAVE | (structural node -- no signal to query)\n");
         }
@@ -633,6 +662,10 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
     if (event->button == 1 && event->type == GDK_2BUTTON_PRESS) {
         if (node->full_path != NULL) {
             netlist_query_show_schematic(node->full_path);
+        } else if (node->unresolved) {
+            status_text(
+                "GTKWAVE | Double-clicked an unresolved net -- no full path to expand "
+                "into.\n");
         } else {
             status_text(
                 "GTKWAVE | Double-clicked a structural node (Assignment/Conditional) -- "
@@ -642,9 +675,14 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
     }
 
     if (event->button == 1 && event->type == GDK_BUTTON_PRESS) {
-        gchar *msg = node->full_path != NULL
-                       ? g_strdup_printf("GTKWAVE | %s (%s)\n", node->full_path, node->label)
-                       : g_strdup_printf("GTKWAVE | %s\n", node->label);
+        gchar *msg;
+        if (node->full_path != NULL) {
+            msg = g_strdup_printf("GTKWAVE | %s (%s)\n", node->full_path, node->label);
+        } else if (node->unresolved) {
+            msg = g_strdup_printf("GTKWAVE | %s (unresolved net)\n", node->label);
+        } else {
+            msg = g_strdup_printf("GTKWAVE | %s\n", node->label);
+        }
         status_text(msg);
         g_free(msg);
         return TRUE;
