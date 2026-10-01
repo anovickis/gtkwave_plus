@@ -91,6 +91,42 @@ static const McpTool MCP_TOOLS[] = {
      "{\"type\":\"object\",\"properties\":{\"source\":{\"type\":\"string\"}},"
      "\"required\":[\"source\"]}"},
     {"reload", "Reload the current waveform file from disk.", "{\"type\":\"object\",\"properties\":{}}"},
+    {"netlist_drivers",
+     "Query the combinational drivers of a signal (requires HDL sources configured "
+     "once via the GUI's Show Drivers/Loads/Cone first). Returns an 'edges' array of "
+     "{path, bits, description, location}.",
+     "{\"type\":\"object\",\"properties\":{\"signal_path\":{\"type\":\"string\"}},"
+     "\"required\":[\"signal_path\"]}"},
+    {"netlist_loads",
+     "Query the combinational fan-out loads of a signal (same config requirement as "
+     "netlist_drivers). optional max_depth (0=unlimited) and module_boundary_only limit "
+     "the transitive result set.",
+     "{\"type\":\"object\",\"properties\":{\"signal_path\":{\"type\":\"string\"},"
+     "\"max_depth\":{\"type\":\"integer\"},\"module_boundary_only\":{\"type\":\"boolean\"}},"
+     "\"required\":[\"signal_path\"]}"},
+    {"netlist_cone",
+     "Query the transitive combinational fan-in cone of a signal (same config "
+     "requirement and limit options as netlist_loads).",
+     "{\"type\":\"object\",\"properties\":{\"signal_path\":{\"type\":\"string\"},"
+     "\"max_depth\":{\"type\":\"integer\"},\"module_boundary_only\":{\"type\":\"boolean\"}},"
+     "\"required\":[\"signal_path\"]}"},
+    {"list_x",
+     "Scan every signal in the whole loaded design (not just displayed ones) for "
+     "unknown/X-like values. Returns an 'entries' array of {signal_path, "
+     "has_full_path, start, end} and a 'truncated' flag.",
+     "{\"type\":\"object\",\"properties\":{}}"},
+    {"time_span_comment_add",
+     "Add a [start, end) range comment, distinct from point markers.",
+     "{\"type\":\"object\",\"properties\":{\"start\":{\"type\":\"integer\"},"
+     "\"end\":{\"type\":\"integer\"},\"text\":{\"type\":\"string\"}},"
+     "\"required\":[\"start\",\"end\",\"text\"]}"},
+    {"time_span_comments_list",
+     "List every time-span comment. Returns a 'comments' array of {start, end, text}.",
+     "{\"type\":\"object\",\"properties\":{}}"},
+    {"undo",
+     "Undo the last destructive trace-list operation (Ungroup, Delete, Combine, "
+     "Expand).",
+     "{\"type\":\"object\",\"properties\":{}}"},
 };
 
 static GDataInputStream *g_wcp_in = NULL;

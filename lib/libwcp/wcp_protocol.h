@@ -46,6 +46,17 @@ typedef enum {
     /* File commands */
     WCP_CMD_LOAD,               /* Load a waveform file */
     WCP_CMD_RELOAD,             /* Reload waveform from disk */
+
+    /* gtkwave extension commands -- not part of the WCP spec as defined by
+     * the Surfer project, but exposed over the same protocol/transport for
+     * backends this fork added that have no WCP equivalent elsewhere. */
+    WCP_CMD_NETLIST_DRIVERS,        /* Query combinational drivers of a signal */
+    WCP_CMD_NETLIST_LOADS,          /* Query combinational fan-out loads of a signal */
+    WCP_CMD_NETLIST_CONE,           /* Query the transitive fan-in cone of a signal */
+    WCP_CMD_LIST_X,                 /* Scan the whole design for X-like values */
+    WCP_CMD_TIME_SPAN_COMMENT_ADD,  /* Add a [start,end) range comment */
+    WCP_CMD_TIME_SPAN_COMMENTS_LIST,/* List all range comments */
+    WCP_CMD_UNDO,                   /* Undo the last destructive trace-list operation */
 } WcpCommandType;
 
 /* ============================================================================
@@ -124,6 +135,22 @@ typedef struct {
         struct {
             uint32_t viewport_idx;
         } zoom;
+
+        /* netlist_drivers / netlist_loads / netlist_cone -- max_depth and
+         * module_boundary_only are only meaningful for loads/cone (0/FALSE
+         * means unlimited, the same default the GUI results windows use). */
+        struct {
+            char *signal_path;
+            uint32_t max_depth;
+            gboolean module_boundary_only;
+        } netlist_query;
+
+        /* time_span_comment_add */
+        struct {
+            int64_t start;
+            int64_t end;
+            char *text;
+        } time_span_comment_add;
     } data;
 } WcpCommand;
 

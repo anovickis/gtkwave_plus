@@ -14,19 +14,6 @@
 // can't make the scan or the results window unusable.
 #define LIST_X_MAX_ENTRIES 2000
 
-typedef struct
-{
-    gchar *signal_path; /* best-effort display path: t->name_full, or t->name if unavailable */
-    gboolean has_full_path; /* TRUE only if t->name_full was non-NULL --
-                             * gates the "Trace Drivers" action, since a
-                             * bare t->name can be ambiguous/wrong for a
-                             * nested scope (same convention
-                             * src/signal_popover.c's find_target_trace()
-                             * already applies) */
-    GwTime start;
-    GwTime end; /* exclusive; clamped to GLOBALS->tims.last if there's no next entry */
-} ListXEntry;
-
 static void list_x_entry_free(gpointer data)
 {
     ListXEntry *entry = data;
@@ -233,6 +220,16 @@ static GPtrArray *scan_all_traces(gboolean *truncated)
     g_hash_table_destroy(seen_nodes);
 
     return out;
+}
+
+GPtrArray *list_x_scan_all(gboolean *out_truncated)
+{
+    gboolean truncated = FALSE;
+    GPtrArray *entries = scan_all_traces(&truncated);
+    if (out_truncated != NULL) {
+        *out_truncated = truncated;
+    }
+    return entries;
 }
 
 // Moves the primary marker to `t` and scrolls the viewport so it's visible

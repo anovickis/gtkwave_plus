@@ -25,6 +25,13 @@ static const char *supported_commands[] = {
     "zoom_to_fit",
     "load",
     "reload",
+    "netlist_drivers",
+    "netlist_loads",
+    "netlist_cone",
+    "list_x",
+    "time_span_comment_add",
+    "time_span_comments_list",
+    "undo",
     NULL
 };
 
@@ -61,6 +68,13 @@ static WcpCommandType parse_command_type(const char *cmd_str)
     if (g_str_equal(cmd_str, "zoom_to_fit"))        return WCP_CMD_ZOOM_TO_FIT;
     if (g_str_equal(cmd_str, "load"))               return WCP_CMD_LOAD;
     if (g_str_equal(cmd_str, "reload"))             return WCP_CMD_RELOAD;
+    if (g_str_equal(cmd_str, "netlist_drivers"))    return WCP_CMD_NETLIST_DRIVERS;
+    if (g_str_equal(cmd_str, "netlist_loads"))      return WCP_CMD_NETLIST_LOADS;
+    if (g_str_equal(cmd_str, "netlist_cone"))       return WCP_CMD_NETLIST_CONE;
+    if (g_str_equal(cmd_str, "list_x"))             return WCP_CMD_LIST_X;
+    if (g_str_equal(cmd_str, "time_span_comment_add"))     return WCP_CMD_TIME_SPAN_COMMENT_ADD;
+    if (g_str_equal(cmd_str, "time_span_comments_list"))   return WCP_CMD_TIME_SPAN_COMMENTS_LIST;
+    if (g_str_equal(cmd_str, "undo"))               return WCP_CMD_UNDO;
     /* clang-format on */
     
     return WCP_CMD_UNKNOWN;
@@ -448,7 +462,46 @@ WcpCommand* wcp_parse_command(const char *json_str, GError **error)
             }
             cmd_valid = TRUE;
             break;
-            
+
+        case WCP_CMD_NETLIST_DRIVERS:
+        case WCP_CMD_NETLIST_LOADS:
+        case WCP_CMD_NETLIST_CONE:
+        {
+            if (!json_object_require_string(obj, "signal_path",
+                                           &cmd->data.netlist_query.signal_path, error)) {
+                break;
+            }
+            cmd->data.netlist_query.max_depth = 0;
+            cmd->data.netlist_query.module_boundary_only = FALSE;
+            if (json_object_has_member(obj, "max_depth")) {
+                if (!json_object_require_uint(obj, "max_depth",
+                                             &cmd->data.netlist_query.max_depth, error)) {
+                    break;
+                }
+            }
+            if (json_object_has_member(obj, "module_boundary_only")) {
+                if (!json_object_require_boolean(
+                        obj, "module_boundary_only",
+                        &cmd->data.netlist_query.module_boundary_only, error)) {
+                    break;
+                }
+            }
+            cmd_valid = TRUE;
+            break;
+        }
+
+        case WCP_CMD_TIME_SPAN_COMMENT_ADD:
+            if (!json_object_require_int64(obj, "start", &cmd->data.time_span_comment_add.start,
+                                          error) ||
+                !json_object_require_int64(obj, "end", &cmd->data.time_span_comment_add.end,
+                                          error) ||
+                !json_object_require_string(obj, "text", &cmd->data.time_span_comment_add.text,
+                                           error)) {
+                break;
+            }
+            cmd_valid = TRUE;
+            break;
+
         default:
             /* Commands with no additional data */
             cmd_valid = TRUE;
@@ -510,7 +563,17 @@ void wcp_command_free(WcpCommand *cmd)
         case WCP_CMD_FOCUS_ITEM:
             g_free(cmd->data.focus.id);
             break;
-            
+
+        case WCP_CMD_NETLIST_DRIVERS:
+        case WCP_CMD_NETLIST_LOADS:
+        case WCP_CMD_NETLIST_CONE:
+            g_free(cmd->data.netlist_query.signal_path);
+            break;
+
+        case WCP_CMD_TIME_SPAN_COMMENT_ADD:
+            g_free(cmd->data.time_span_comment_add.text);
+            break;
+
         default:
             break;
     }

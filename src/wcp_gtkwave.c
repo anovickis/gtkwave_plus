@@ -15,9 +15,13 @@
 #include "currenttime.h"
 #include "time_compress.h"
 #include "globals.h"
+#include "list_x_view.h"
 #include "lx2.h"
+#include "netlist_query_ui.h"
 #include "signal_list.h"
 #include "symbol.h"
+#include "time_span_comments.h"
+#include "undo_stack.h"
 #include "wavewindow.h"
 #include "zoombuttons.h"
 
@@ -678,6 +682,270 @@ static char* handle_zoom_to_fit(WcpServer *server, WcpCommand *cmd)
 }
 
 /* ============================================================================
+ * gtkwave extension commands (see wcp_protocol.h's WcpCommandType comment)
+ * ============================================================================ */
+
+static char* build_netlist_edges_response(const char *command, GPtrArray *edges)
+{
+    JsonBuilder *b = json_builder_new();
+    json_builder_begin_object(b);
+    json_builder_set_member_name(b, "type");
+    json_builder_add_string_value(b, "response");
+    json_builder_set_member_name(b, "command");
+    json_builder_add_string_value(b, command);
+    json_builder_set_member_name(b, "edges");
+    json_builder_begin_array(b);
+
+    for (guint i = 0; i < edges->len; i++) {
+        GwNetlistEdge *edge = g_ptr_array_index(edges, i);
+        json_builder_begin_object(b);
+        json_builder_set_member_name(b, "path");
+        json_builder_add_string_value(b, edge->path != NULL ? edge->path : "");
+        json_builder_set_member_name(b, "bits");
+        json_builder_add_string_value(b, edge->bits != NULL ? edge->bits : "");
+        json_builder_set_member_name(b, "description");
+        json_builder_add_string_value(b, edge->description != NULL ? edge->description : "");
+        json_builder_set_member_name(b, "location");
+        json_builder_add_string_value(b, edge->location != NULL ? edge->location : "");
+        json_builder_end_object(b);
+    }
+
+    json_builder_end_array(b);
+    json_builder_end_object(b);
+
+    JsonGenerator *gen = json_generator_new();
+    json_generator_set_root(gen, json_builder_get_root(b));
+    char *out = json_generator_to_data(gen, NULL);
+    g_object_unref(gen);
+    json_node_free(json_builder_get_root(b));
+    g_object_unref(b);
+    return out;
+}
+
+// Shared precondition for all three netlist_* commands below: unlike the
+// interactive Show Drivers/Loads/Cone actions, a WCP client has no way to
+// respond to a GTK config dialog popping up unexpectedly, so this never
+// calls netlist_query_ensure_config() -- it just fails cleanly if the
+// session hasn't already configured HDL sources via the GUI at least once.
+static gboolean netlist_query_is_configured(void)
+{
+    return GLOBALS->netlist_source_files != NULL && GLOBALS->netlist_source_files->len > 0 &&
+          GLOBALS->netlist_top_module != NULL;
+}
+
+static char* handle_netlist_drivers(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+
+    if (!netlist_query_is_configured()) {
+        return wcp_response_error(
+            "not_configured",
+            "Netlist HDL sources aren't configured yet -- use Show Drivers/Loads/Cone "
+            "once via the GUI first (one-time per session).",
+            NULL);
+    }
+
+    GwNetlistQuery *query = netlist_query_new_from_config();
+    GError *error = NULL;
+    GPtrArray *edges =
+        gw_netlist_query_get_drivers(query, cmd->data.netlist_query.signal_path, &error);
+    g_object_unref(query);
+
+    if (edges == NULL) {
+        char *response =
+            wcp_response_error("query_failed", error != NULL ? error->message : "unknown error", NULL);
+        g_clear_error(&error);
+        return response;
+    }
+
+    char *response = build_netlist_edges_response("netlist_drivers", edges);
+    g_ptr_array_unref(edges);
+    return response;
+}
+
+static char* handle_netlist_loads(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+
+    if (!netlist_query_is_configured()) {
+        return wcp_response_error(
+            "not_configured",
+            "Netlist HDL sources aren't configured yet -- use Show Drivers/Loads/Cone "
+            "once via the GUI first (one-time per session).",
+            NULL);
+    }
+
+    GwNetlistQuery *query = netlist_query_new_from_config();
+    GwNetlistQueryLimits limits = {
+        .max_depth = cmd->data.netlist_query.max_depth,
+        .module_boundary_only = cmd->data.netlist_query.module_boundary_only,
+    };
+    GError *error = NULL;
+    GPtrArray *edges = gw_netlist_query_get_loads_limited(
+        query, cmd->data.netlist_query.signal_path, &limits, &error);
+    g_object_unref(query);
+
+    if (edges == NULL) {
+        char *response =
+            wcp_response_error("query_failed", error != NULL ? error->message : "unknown error", NULL);
+        g_clear_error(&error);
+        return response;
+    }
+
+    char *response = build_netlist_edges_response("netlist_loads", edges);
+    g_ptr_array_unref(edges);
+    return response;
+}
+
+static char* handle_netlist_cone(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+
+    if (!netlist_query_is_configured()) {
+        return wcp_response_error(
+            "not_configured",
+            "Netlist HDL sources aren't configured yet -- use Show Drivers/Loads/Cone "
+            "once via the GUI first (one-time per session).",
+            NULL);
+    }
+
+    GwNetlistQuery *query = netlist_query_new_from_config();
+    GwNetlistQueryLimits limits = {
+        .max_depth = cmd->data.netlist_query.max_depth,
+        .module_boundary_only = cmd->data.netlist_query.module_boundary_only,
+    };
+    GError *error = NULL;
+    GPtrArray *edges = gw_netlist_query_get_fanin_limited(
+        query, cmd->data.netlist_query.signal_path, &limits, &error);
+    g_object_unref(query);
+
+    if (edges == NULL) {
+        char *response =
+            wcp_response_error("query_failed", error != NULL ? error->message : "unknown error", NULL);
+        g_clear_error(&error);
+        return response;
+    }
+
+    char *response = build_netlist_edges_response("netlist_cone", edges);
+    g_ptr_array_unref(edges);
+    return response;
+}
+
+static char* handle_list_x(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+    (void)cmd;
+
+    gboolean truncated = FALSE;
+    GPtrArray *entries = list_x_scan_all(&truncated);
+
+    JsonBuilder *b = json_builder_new();
+    json_builder_begin_object(b);
+    json_builder_set_member_name(b, "type");
+    json_builder_add_string_value(b, "response");
+    json_builder_set_member_name(b, "command");
+    json_builder_add_string_value(b, "list_x");
+    json_builder_set_member_name(b, "truncated");
+    json_builder_add_boolean_value(b, truncated);
+    json_builder_set_member_name(b, "entries");
+    json_builder_begin_array(b);
+
+    for (guint i = 0; i < entries->len; i++) {
+        ListXEntry *entry = g_ptr_array_index(entries, i);
+        json_builder_begin_object(b);
+        json_builder_set_member_name(b, "signal_path");
+        json_builder_add_string_value(b, entry->signal_path != NULL ? entry->signal_path : "");
+        json_builder_set_member_name(b, "has_full_path");
+        json_builder_add_boolean_value(b, entry->has_full_path);
+        json_builder_set_member_name(b, "start");
+        json_builder_add_int_value(b, entry->start);
+        json_builder_set_member_name(b, "end");
+        json_builder_add_int_value(b, entry->end);
+        json_builder_end_object(b);
+    }
+
+    json_builder_end_array(b);
+    json_builder_end_object(b);
+
+    JsonGenerator *gen = json_generator_new();
+    json_generator_set_root(gen, json_builder_get_root(b));
+    char *response = json_generator_to_data(gen, NULL);
+    g_object_unref(gen);
+    json_node_free(json_builder_get_root(b));
+    g_object_unref(b);
+
+    g_ptr_array_unref(entries);
+    return response;
+}
+
+static char* handle_time_span_comment_add(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+
+    if (!GLOBALS->dump_file || GLOBALS->loaded_file_type == MISSING_FILE) {
+        return wcp_response_error("no_waveform", "No waveform loaded", NULL);
+    }
+
+    time_span_comments_add(cmd->data.time_span_comment_add.start,
+                           cmd->data.time_span_comment_add.end,
+                           cmd->data.time_span_comment_add.text);
+
+    return wcp_response_ack();
+}
+
+static char* handle_time_span_comments_list(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+    (void)cmd;
+
+    JsonBuilder *b = json_builder_new();
+    json_builder_begin_object(b);
+    json_builder_set_member_name(b, "type");
+    json_builder_add_string_value(b, "response");
+    json_builder_set_member_name(b, "command");
+    json_builder_add_string_value(b, "time_span_comments_list");
+    json_builder_set_member_name(b, "comments");
+    json_builder_begin_array(b);
+
+    guint count = time_span_comments_count();
+    for (guint i = 0; i < count; i++) {
+        const GwTimeSpanComment *c = time_span_comments_get(i);
+        json_builder_begin_object(b);
+        json_builder_set_member_name(b, "start");
+        json_builder_add_int_value(b, c->start);
+        json_builder_set_member_name(b, "end");
+        json_builder_add_int_value(b, c->end);
+        json_builder_set_member_name(b, "text");
+        json_builder_add_string_value(b, c->text != NULL ? c->text : "");
+        json_builder_end_object(b);
+    }
+
+    json_builder_end_array(b);
+    json_builder_end_object(b);
+
+    JsonGenerator *gen = json_generator_new();
+    json_generator_set_root(gen, json_builder_get_root(b));
+    char *response = json_generator_to_data(gen, NULL);
+    g_object_unref(gen);
+    json_node_free(json_builder_get_root(b));
+    g_object_unref(b);
+    return response;
+}
+
+static char* handle_undo(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+    (void)cmd;
+
+    if (!undo_stack_can_undo()) {
+        return wcp_response_error("nothing_to_undo", "Nothing to undo", NULL);
+    }
+
+    undo_stack_undo();
+    return wcp_response_ack();
+}
+
+/* ============================================================================
  * Main Command Dispatcher
  * ============================================================================ */
 
@@ -727,7 +995,28 @@ static char* wcp_command_handler(WcpServer *server, WcpCommand *cmd, gpointer us
             
         case WCP_CMD_RELOAD:
             return handle_reload(server, cmd);
-            
+
+        case WCP_CMD_NETLIST_DRIVERS:
+            return handle_netlist_drivers(server, cmd);
+
+        case WCP_CMD_NETLIST_LOADS:
+            return handle_netlist_loads(server, cmd);
+
+        case WCP_CMD_NETLIST_CONE:
+            return handle_netlist_cone(server, cmd);
+
+        case WCP_CMD_LIST_X:
+            return handle_list_x(server, cmd);
+
+        case WCP_CMD_TIME_SPAN_COMMENT_ADD:
+            return handle_time_span_comment_add(server, cmd);
+
+        case WCP_CMD_TIME_SPAN_COMMENTS_LIST:
+            return handle_time_span_comments_list(server, cmd);
+
+        case WCP_CMD_UNDO:
+            return handle_undo(server, cmd);
+
         default:
             return wcp_response_error("unknown_command", 
                                     "Unknown command type",
