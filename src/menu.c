@@ -2305,6 +2305,15 @@ void menu_uncompress_all(gpointer null_data, guint callback_action, GtkWidget *w
     time_compress_action_uncompress_all();
 }
 
+void menu_manage_compressed_spans(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    time_compress_show_spans_list();
+}
+
 void menu_add_time_span_comment(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
     (void)null_data;
@@ -5133,6 +5142,11 @@ static gtkwave_mlist_t menu_items[] = {
                 WV_MENU_COMPRESS,
                 "<Item>"),
     WAVE_GTKIFE("/Edit/Uncompress All", NULL, menu_uncompress_all, WV_MENU_UNCOMPRESS, "<Item>"),
+    WAVE_GTKIFE("/Edit/Manage Compressed Spans...",
+                NULL,
+                menu_manage_compressed_spans,
+                WV_MENU_MANAGE_COMPRESSED_SPANS,
+                "<Item>"),
     WAVE_GTKIFE("/Edit/<separator>", NULL, NULL, WV_MENU_SEP4C, "<Separator>"),
     WAVE_GTKIFE("/Edit/Add Time-Span Comment...",
                 NULL,

@@ -93,3 +93,10 @@ GwTime gw_solve_start_for_pixel_anchor(gdouble anchor_pixel, GwTime anchor_time)
 // gw_pixel_to_time() actually walks through over that pixel span,
 // falling back to the exact plain formula when nothing is compressed.
 GwTime gw_time_page_increment(void);
+
+// Opens a list window of every currently-compressed span, each with a
+// "Go To" (jump marker + viewport to the span's start) and "Uncompress"
+// button -- the only way to see/remove a span today is clicking its tiny
+// on-canvas "+" marker, unlike every other "list of things" feature this
+// session built.
+void time_compress_show_spans_list(void);

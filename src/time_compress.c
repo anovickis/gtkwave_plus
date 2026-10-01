@@ -2,6 +2,7 @@
 #include <gtkwave.h>
 #include "time_compress.h"
 #include "globals.h"
+#include "currenttime.h"
 #include "signalwindow.h"
 #include "status.h"
 
@@ -345,4 +346,150 @@ GwTime gw_time_page_increment(void)
     // "how much time do GLOBALS->wavewidth pixels cover, compression-
     // aware" without a redundant second call for the trivial subtrahend.
     return gw_pixel_to_time((gdouble)GLOBALS->wavewidth) - GLOBALS->tims.start;
+}
+
+// "Manage Compressed Spans..." list window -- every other "list of
+// things" feature this session built (List X, Time-Span Comments, Group
+// Manager) got one; this feature didn't, leaving the tiny on-canvas "+"
+// marker as the only way to see or remove an active span.
+
+// Moves the primary marker to `t` and scrolls the viewport so it's
+// visible -- same simple one-shot idiom src/list_x_view.c's own
+// goto_time() uses (see its comment for why the fuller centered-recenter
+// math elsewhere isn't needed here either).
+static void goto_time(GwTime t)
+{
+    if (t < GLOBALS->tims.first) {
+        t = GLOBALS->tims.first;
+    } else if (t > GLOBALS->tims.last) {
+        t = GLOBALS->tims.last;
+    }
+
+    GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
+    gw_marker_set_position(primary_marker, t);
+    gw_marker_set_enabled(primary_marker, TRUE);
+
+    GtkAdjustment *hadj = GTK_ADJUSTMENT(GLOBALS->wave_hslider);
+    gtk_adjustment_set_value(hadj, (gdouble)t);
+
+    GwTime pageinc = gw_time_page_increment();
+    if (t < (GLOBALS->tims.last - pageinc + 1)) {
+        GLOBALS->tims.timecache = t;
+    } else {
+        GLOBALS->tims.timecache = GLOBALS->tims.last - pageinc + 1;
+        if (GLOBALS->tims.timecache < GLOBALS->tims.first) {
+            GLOBALS->tims.timecache = GLOBALS->tims.first;
+        }
+    }
+
+    time_update();
+    redraw_signals_and_waves();
+}
+
+static gchar *format_span(GwTime start, GwTime end)
+{
+    GwTimeDimension time_dimension = gw_dump_file_get_time_dimension(GLOBALS->dump_file);
+    GwTime global_time_offset = gw_dump_file_get_global_time_offset(GLOBALS->dump_file);
+    char start_buf[40];
+    char end_buf[40];
+
+    reformat_time(start_buf, start + global_time_offset, time_dimension);
+    reformat_time(end_buf, end + global_time_offset, time_dimension);
+
+    return g_strdup_printf("[%s, %s)", start_buf, end_buf);
+}
+
+typedef struct
+{
+    GwTime start;
+    GtkWidget *window; /* not owned -- destroyed by on_uncompress_clicked(), not freed here */
+} CompressedSpanRowData;
+
+static void compressed_span_row_data_free(gpointer data)
+{
+    g_free(data);
+}
+
+static void on_goto_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    CompressedSpanRowData *data = user_data;
+    goto_time(data->start);
+}
+
+static void on_uncompress_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    CompressedSpanRowData *data = user_data;
+    time_compress_remove_span_at(data->start);
+    redraw_signals_and_waves();
+    gtk_widget_destroy(data->window);
+    time_compress_show_spans_list(); /* cheap full refresh -- small lists, no state to preserve */
+}
+
+void time_compress_show_spans_list(void)
+{
+    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(window), "Manage Compressed Spans");
+    gtk_window_set_default_size(GTK_WINDOW(window), 480, 320);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
+
+    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(
+        GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
+
+    GtkWidget *listbox = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(listbox), GTK_SELECTION_NONE);
+    gtk_container_add(GTK_CONTAINER(scrolled), listbox);
+
+    guint count = time_compress_span_count();
+
+    if (count == 0) {
+        GtkWidget *empty_label = gtk_label_new("No compressed spans.");
+        gtk_widget_set_margin_start(empty_label, 8);
+        gtk_widget_set_margin_end(empty_label, 8);
+        gtk_widget_set_margin_top(empty_label, 8);
+        gtk_widget_set_margin_bottom(empty_label, 8);
+        gtk_list_box_insert(GTK_LIST_BOX(listbox), empty_label, -1);
+    } else {
+        for (guint i = 0; i < count; i++) {
+            GwTime start, end;
+            time_compress_span_get(i, &start, &end);
+
+            GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+            gtk_container_set_border_width(GTK_CONTAINER(row_box), 4);
+
+            gchar *span_text = format_span(start, end);
+            GtkWidget *label = gtk_label_new(span_text);
+            g_free(span_text);
+            gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+            gtk_widget_set_hexpand(label, TRUE);
+            gtk_box_pack_start(GTK_BOX(row_box), label, TRUE, TRUE, 0);
+
+            CompressedSpanRowData *goto_data = g_new0(CompressedSpanRowData, 1);
+            goto_data->start = start;
+            GtkWidget *goto_button = gtk_button_new_with_label("Go To");
+            g_signal_connect_data(goto_button, "clicked", G_CALLBACK(on_goto_clicked), goto_data,
+                                  (GClosureNotify)(GDestroyNotify)compressed_span_row_data_free,
+                                  (GConnectFlags)0);
+            gtk_box_pack_start(GTK_BOX(row_box), goto_button, FALSE, FALSE, 0);
+
+            CompressedSpanRowData *uncompress_data = g_new0(CompressedSpanRowData, 1);
+            uncompress_data->start = start;
+            uncompress_data->window = window;
+            GtkWidget *uncompress_button = gtk_button_new_with_label("Uncompress");
+            g_signal_connect_data(uncompress_button, "clicked",
+                                  G_CALLBACK(on_uncompress_clicked), uncompress_data,
+                                  (GClosureNotify)(GDestroyNotify)compressed_span_row_data_free,
+                                  (GConnectFlags)0);
+            gtk_box_pack_start(GTK_BOX(row_box), uncompress_button, FALSE, FALSE, 0);
+
+            gtk_list_box_insert(GTK_LIST_BOX(listbox), row_box, -1);
+        }
+    }
+
+    gtk_widget_show_all(window);
 }
