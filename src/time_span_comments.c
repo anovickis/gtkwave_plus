@@ -39,6 +39,16 @@ void time_span_comments_remove(guint index)
     g_ptr_array_remove_index(GLOBALS->time_span_comments, index);
 }
 
+void time_span_comments_set_text(guint index, const gchar *text)
+{
+    if (GLOBALS->time_span_comments == NULL || index >= GLOBALS->time_span_comments->len) {
+        return;
+    }
+    GwTimeSpanComment *c = g_ptr_array_index(GLOBALS->time_span_comments, index);
+    g_free(c->text);
+    c->text = g_strdup(text != NULL ? text : "");
+}
+
 guint time_span_comments_count(void)
 {
     return GLOBALS->time_span_comments != NULL ? GLOBALS->time_span_comments->len : 0;
@@ -191,6 +201,55 @@ static void on_delete_clicked(GtkButton *button, gpointer user_data)
     time_span_comments_show_list(); /* cheap full refresh -- small lists, no state to preserve */
 }
 
+static void on_edit_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    RowActionData *data = user_data;
+    const GwTimeSpanComment *c = time_span_comments_get(data->index);
+    if (c == NULL) {
+        return;
+    }
+
+    GtkWindow *parent =
+        GTK_IS_WINDOW(data->window) ? GTK_WINDOW(data->window) : NULL;
+
+    gchar *span_text = format_span(c->start, c->end);
+    gchar *title = g_strdup_printf("Edit Time-Span Comment: %s", span_text);
+    g_free(span_text);
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        title, parent, GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL, "_Save", GTK_RESPONSE_OK,
+        NULL);
+    g_free(title);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 12);
+    gtk_container_add(GTK_CONTAINER(content), box);
+
+    gtk_box_pack_start(GTK_BOX(box), gtk_label_new("Comment:"), FALSE, FALSE, 0);
+
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry), c->text);
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_widget_set_hexpand(entry, TRUE);
+    gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
+
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
+    gtk_widget_show_all(dialog);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_OK) {
+        const gchar *text = gtk_entry_get_text(GTK_ENTRY(entry));
+        time_span_comments_set_text(
+            data->index, (text != NULL && text[0] != '\0') ? text : "(untitled)");
+        gtk_widget_destroy(dialog);
+        gtk_widget_destroy(data->window);
+        time_span_comments_show_list(); /* cheap full refresh, same as Delete */
+        return;
+    }
+
+    gtk_widget_destroy(dialog);
+}
+
 void time_span_comments_show_list(void)
 {
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -246,6 +305,15 @@ void time_span_comments_show_list(void)
             g_signal_connect_data(goto_button, "clicked", G_CALLBACK(on_goto_clicked), goto_data,
                                   (GClosureNotify)(GDestroyNotify)row_action_data_free, (GConnectFlags)0);
             gtk_box_pack_start(GTK_BOX(row_box), goto_button, FALSE, FALSE, 0);
+
+            RowActionData *edit_data = g_new0(RowActionData, 1);
+            edit_data->index = i;
+            edit_data->window = window;
+            GtkWidget *edit_button = gtk_button_new_with_label("Edit...");
+            g_signal_connect_data(edit_button, "clicked", G_CALLBACK(on_edit_clicked), edit_data,
+                                  (GClosureNotify)(GDestroyNotify)row_action_data_free,
+                                  (GConnectFlags)0);
+            gtk_box_pack_start(GTK_BOX(row_box), edit_button, FALSE, FALSE, 0);
 
             RowActionData *delete_data = g_new0(RowActionData, 1);
             delete_data->index = i;

@@ -25,6 +25,10 @@ void time_span_comments_add(GwTime start, GwTime end, const gchar *text);
 // time_span_comments_get()'s iteration order). No-op if out of range.
 void time_span_comments_remove(guint index);
 
+// Replaces the text of the comment at `index` with a copy of `text`.
+// The time span itself is unchanged. No-op if out of range.
+void time_span_comments_set_text(guint index, const gchar *text);
+
 guint time_span_comments_count(void);
 
 // Borrowed pointer, valid until the next add/remove/clear. NULL if
@@ -41,7 +45,8 @@ void time_span_comments_clear(void);
 void time_span_comments_show_add_dialog(void);
 
 // Opens a list window of every comment, each with a "Go To" (jump
-// marker + viewport to the comment's start) and "Delete" button.
+// marker + viewport to the comment's start), "Edit..." (change the
+// comment text in place, time span unchanged) and "Delete" button.
 void time_span_comments_show_list(void);
 
 #endif /* TIME_SPAN_COMMENTS_H */
