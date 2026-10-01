@@ -451,6 +451,24 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   via gdb: the exact previously-failing nested, bit-range-suffixed query
   now succeeds and opens a real schematic window, with both the
   DUT-auto-detect and the new bit-range-limitation status notes shown.
+- **Extended MCP/WCP with netlist query, List X, Time-Span Comments,
+  Undo.** Explicitly flagged as follow-up when MCP shipped: it only
+  wrapped the pre-existing WCP command set, leaving every backend built
+  afterward unreachable from any socket protocol. New WCP commands
+  (`netlist_drivers`/`netlist_loads`/`netlist_cone`, `list_x`,
+  `time_span_comment_add`/`time_span_comments_list`, `undo`) plus
+  matching MCP tool table entries (the bridge's generic pass-through
+  needed no new logic). The netlist query commands deliberately never
+  auto-prompt the GUI's HDL-source-config dialog (a WCP client can't
+  respond to one popping up) -- fail cleanly with `not_configured`
+  instead. Needed a new public `list_x_scan_all()` in
+  `list_x_view.c/.h` (previously GUI-only). Verified via gdb + the real
+  `gtkwave-mcp` bridge against a real design: confirmed real
+  slang-netlist-backed driver/load/fan-in data with correct source
+  locations, confirmed the `not_configured` refusal, confirmed `list_x`
+  finds all 4 known X-intervals in a real fixture, confirmed
+  `time_span_comment_add`/list round-trips exactly, confirmed `undo`
+  correctly reports `nothing_to_undo`.
 
 ## Up next, in order
 
