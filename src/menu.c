@@ -1506,6 +1506,15 @@ void menu_undo(gpointer null_data, guint callback_action, GtkWidget *widget)
     undo_stack_undo();
 }
 
+void menu_redo(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    undo_stack_redo();
+}
+
 void menu_expand(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
     (void)null_data;
@@ -5109,6 +5118,7 @@ static gtkwave_mlist_t menu_items[] = {
                 "<Item>"),
 
     WAVE_GTKIFE("/Edit/Undo", "<Control>Z", menu_undo, WV_MENU_UNDO, "<Item>"),
+    WAVE_GTKIFE("/Edit/Redo", "<Control><Shift>Z", menu_redo, WV_MENU_REDO, "<Item>"),
 
 #ifdef MAC_INTEGRATION
     WAVE_GTKIFE("/Edit/Cut", NULL, menu_cut_traces, WV_MENU_EC, "<Item>"),

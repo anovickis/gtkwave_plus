@@ -57,6 +57,7 @@ typedef enum {
     WCP_CMD_TIME_SPAN_COMMENT_ADD,  /* Add a [start,end) range comment */
     WCP_CMD_TIME_SPAN_COMMENTS_LIST,/* List all range comments */
     WCP_CMD_UNDO,                   /* Undo the last destructive trace-list operation */
+    WCP_CMD_REDO,                   /* Redo the last undone trace-list operation */
 } WcpCommandType;
 
 /* ============================================================================

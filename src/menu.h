@@ -103,6 +103,7 @@ enum WV_MenuItems
     WV_MENU_EIC,
     WV_MENU_EIA,
     WV_MENU_UNDO,
+    WV_MENU_REDO,
     WV_MENU_EC,
     WV_MENU_ECY,
     WV_MENU_EP,
@@ -329,6 +330,7 @@ void menu_insert_analog_height_extension(gpointer null_data,
                                          guint callback_action,
                                          GtkWidget *widget);
 void menu_undo(gpointer null_data, guint callback_action, GtkWidget *widget);
+void menu_redo(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_alias(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_remove_aliases(gpointer null_data, guint callback_action, GtkWidget *widget);
 void menu_cut_traces(gpointer null_data, guint callback_action, GtkWidget *widget);

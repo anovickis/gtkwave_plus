@@ -945,6 +945,19 @@ static char* handle_undo(WcpServer *server, WcpCommand *cmd)
     return wcp_response_ack();
 }
 
+static char* handle_redo(WcpServer *server, WcpCommand *cmd)
+{
+    (void)server;
+    (void)cmd;
+
+    if (!undo_stack_can_redo()) {
+        return wcp_response_error("nothing_to_redo", "Nothing to redo", NULL);
+    }
+
+    undo_stack_redo();
+    return wcp_response_ack();
+}
+
 /* ============================================================================
  * Main Command Dispatcher
  * ============================================================================ */
@@ -1016,6 +1029,9 @@ static char* wcp_command_handler(WcpServer *server, WcpCommand *cmd, gpointer us
 
         case WCP_CMD_UNDO:
             return handle_undo(server, cmd);
+
+        case WCP_CMD_REDO:
+            return handle_redo(server, cmd);
 
         default:
             return wcp_response_error("unknown_command", 

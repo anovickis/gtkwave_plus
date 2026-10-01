@@ -127,6 +127,7 @@ static const McpTool MCP_TOOLS[] = {
      "Undo the last destructive trace-list operation (Ungroup, Delete, Combine, "
      "Expand).",
      "{\"type\":\"object\",\"properties\":{}}"},
+    {"redo", "Redo the last undone trace-list operation.", "{\"type\":\"object\",\"properties\":{}}"},
 };
 
 static GDataInputStream *g_wcp_in = NULL;

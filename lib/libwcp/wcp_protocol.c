@@ -32,6 +32,7 @@ static const char *supported_commands[] = {
     "time_span_comment_add",
     "time_span_comments_list",
     "undo",
+    "redo",
     NULL
 };
 
@@ -75,6 +76,7 @@ static WcpCommandType parse_command_type(const char *cmd_str)
     if (g_str_equal(cmd_str, "time_span_comment_add"))     return WCP_CMD_TIME_SPAN_COMMENT_ADD;
     if (g_str_equal(cmd_str, "time_span_comments_list"))   return WCP_CMD_TIME_SPAN_COMMENTS_LIST;
     if (g_str_equal(cmd_str, "undo"))               return WCP_CMD_UNDO;
+    if (g_str_equal(cmd_str, "redo"))               return WCP_CMD_REDO;
     /* clang-format on */
     
     return WCP_CMD_UNKNOWN;
