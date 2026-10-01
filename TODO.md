@@ -495,6 +495,17 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   real window, confirmed the real row's label text, clicked the real
   "Uncompress" button and confirmed the span was actually removed and
   the window correctly rebuilds to "No compressed spans."
+- **Added Redo**, completing Undo's documented single-level limitation.
+  Refactored the single snapshot stack into two symmetric ones (undo/
+  redo): `undo_stack_undo()` now pushes the pre-undo state onto the
+  redo stack before restoring (so Redo can bring it back), and a fresh
+  destructive op clears the redo stack, same as any plain linear undo/
+  redo history. New Edit > Redo (Ctrl+Shift+Z), plus a matching WCP
+  `redo` command and MCP tool entry. Verified via gdb + the real
+  `gtkwave-mcp` bridge: full delete/undo/redo round-trip symmetry
+  (can_undo/can_redo flip correctly at each step, traces actually
+  restored/re-deleted), then confirmed a fresh destructive op correctly
+  clears the redo stack.
 
 ## Up next, in order
 
