@@ -506,6 +506,18 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   (can_undo/can_redo flip correctly at each step, traces actually
   restored/re-deleted), then confirmed a fresh destructive op correctly
   clears the redo stack.
+- **Added Edit to Time-Span Comments** (was Add/Delete only). Each row
+  in the list window now has an "Edit..." button alongside Go To/
+  Delete, opening the same dialog pattern Add uses but pre-filled with
+  the comment's current text; saves in place via a new
+  `time_span_comments_set_text()` (time span itself stays fixed, only
+  the text changes). Verified live via gdb: opened the real list
+  window, clicked the real Edit button (forcing the modal's OK return
+  via a breakpoint), confirmed the dialog was pre-filled with the
+  existing text, changed it, and confirmed via
+  `time_span_comments_get()` that the text changed, start/end were
+  preserved, and the count stayed at 1 -- then confirmed the rebuilt
+  list window's row label showed the new text.
 
 ## Up next, in order
 
