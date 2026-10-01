@@ -469,6 +469,22 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   finds all 4 known X-intervals in a real fixture, confirmed
   `time_span_comment_add`/list round-trips exactly, confirmed `undo`
   correctly reports `nothing_to_undo`.
+- **Fixed WCP `add_items` (and every other caller of
+  `gw_dump_file_lookup_symbol`) silently failing on a plain multi-bit
+  signal name.** A real, repeatedly-hit gap, first found during Search
+  UX rework and re-confirmed during later testing: a natively-declared
+  multi-bit signal's own facs symbol name already embeds its bit-range
+  suffix (e.g. "top.bus[3:0]") at load time, not discoverable from the
+  plain declared name. Fixed at the root in
+  `lib/libgtkwave/src/gw-dump-file.c` rather than in any one caller:
+  when a bare lookup fails and isn't already bracket-suffixed, search
+  for exactly one real symbol whose name is the given name immediately
+  followed by a bracketed range, and auto-resolve to it (ambiguous
+  matches are left unresolved). Verified via the real `gtkwave-mcp`
+  bridge: bare multi-bit names now resolve and add correctly via the
+  real WCP `add_items` command; confirmed no regression for plain
+  scalars and no false-positive matching for a genuinely nonexistent
+  name.
 
 ## Up next, in order
 
