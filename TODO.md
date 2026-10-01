@@ -431,6 +431,26 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   widget tree to the real Analog buttons, clicked the real "Step" button
   via `gtk_button_clicked()` and confirmed the trace's flags gained
   exactly `TR_ANALOG_STEP`, clicked "Off" and confirmed it cleared back.
+- **Gate-level schematic: fixed bit-range-suffixed queries
+  ("Nothing there to show").** Chased a suspected "nested-instance path"
+  bug that turned out to be a false lead (an artifact of an earlier ad
+  hoc manual yosys test, not a real bug -- the real auto-detect/prefix-
+  stripping code already handles nested instances correctly), but
+  retesting the real code path against a real nested signal surfaced a
+  genuine, different bug: Yosys's `select` command has no syntax for a
+  Verilog-style bit-range suffix (`name[msb:lsb]`) -- confirmed directly
+  (`select top/value` works, `select top/value[2:1]` silently matches
+  nothing). The popover's "Bit range:" entry builds that exact
+  bracket-suffixed path for all four Drivers/Loads/Cone/Schematic
+  actions; it works for the first three (slang-netlist does support a
+  bit-range suffix) but the gate-level schematic (a completely different,
+  Yosys-based path) was apparently never actually exercised with a real
+  range before. Fixed by stripping the suffix before building the Yosys
+  select expression, with a clear status note explaining the bus-wide
+  fallback (Yosys has no bit-slicing selector to use instead). Verified
+  via gdb: the exact previously-failing nested, bit-range-suffixed query
+  now succeeds and opens a real schematic window, with both the
+  DUT-auto-detect and the new bit-range-limitation status notes shown.
 
 ## Up next, in order
 
