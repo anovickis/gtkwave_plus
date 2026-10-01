@@ -833,7 +833,37 @@ GwSymbol *gw_dump_file_lookup_symbol(GwDumpFile *self, const gchar *name)
     memcpy(name2, name, len);
     strcpy(name2 + len, "[0]"); /* bluespec vs modelsim */
 
-    return symfind_2(self, name2);
+    s_pnt = symfind_2(self, name2);
+    if (s_pnt != NULL) {
+        return s_pnt;
+    }
+
+    // A natively-declared multi-bit VCD/FST variable's own facs symbol
+    // name already embeds its bit-range suffix (e.g. "top.bus[3:0]"),
+    // assigned at load time -- gtkwave's own internal naming convention,
+    // not discoverable from the plain name a caller is likely to have
+    // (neither the VCD/FST source nor any other tool spells this suffix
+    // out). If a bare lookup of the undecorated name failed, and there's
+    // exactly one real symbol whose name is `name` immediately followed
+    // by a bracketed range, auto-resolve to it instead of requiring
+    // every caller to already know this convention (previously a real,
+    // repeatedly-hit gap: e.g. WCP's add_items would silently fail to
+    // add a plain multi-bit signal by its VCD-declared name). Ambiguous
+    // (more than one match) is left unresolved rather than guessing.
+    gchar *escaped = g_regex_escape_string(name, -1);
+    gchar *pattern = g_strdup_printf("^%s\\[[^][]*\\]$", escaped);
+    g_free(escaped);
+
+    GPtrArray *matches = gw_dump_file_find_symbols(self, pattern, NULL);
+    g_free(pattern);
+
+    GwSymbol *resolved =
+        (matches != NULL && matches->len == 1) ? g_ptr_array_index(matches, 0) : NULL;
+    if (matches != NULL) {
+        g_ptr_array_free(matches, TRUE);
+    }
+
+    return resolved;
 }
 
 /**
