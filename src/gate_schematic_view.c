@@ -17,13 +17,43 @@
 // auto-detected real DUT module instead, `strip_prefix` is the VCD-side
 // instance path leading to it (e.g. "tb.dut"), which is a different
 // string gtkwave's signal paths actually use.
+// Yosys's `select` command has no syntax for a Verilog-style bit-range
+// suffix (`name[msb:lsb]` or `name[bit]`) -- an object pattern only ever
+// matches a whole object by name, so a bit-range-suffixed signal path
+// (as produced by the popover's "Bit range:" entry, which works fine for
+// the RTL-level slang-netlist-based Drivers/Loads/Cone/Schematic
+// queries) silently matches nothing here, failing the whole query with
+// "Nothing there to show" -- confirmed directly against a real yosys run
+// with and without the suffix on the identical, otherwise-valid path.
+static gboolean has_bit_range_suffix(const gchar *path)
+{
+    const gchar *bracket = strrchr(path, '[');
+    return bracket != NULL && g_str_has_suffix(path, "]");
+}
+
+static gchar *strip_bit_range_suffix(const gchar *path)
+{
+    const gchar *bracket = strrchr(path, '[');
+    if (!has_bit_range_suffix(path)) {
+        return g_strdup(path);
+    }
+    return g_strndup(path, (gsize)(bracket - path));
+}
+
 static gchar *make_yosys_select(const gchar *yosys_top_module, const gchar *strip_prefix,
                                 const gchar *signal_path)
 {
     gchar *prefix = g_strconcat(strip_prefix, ".", NULL);
     const gchar *rel = g_str_has_prefix(signal_path, prefix) ? signal_path + strlen(prefix)
                                                              : signal_path;
-    gchar *result = g_strconcat(yosys_top_module, "/", rel, NULL);
+    // Dropped rather than forwarded to Yosys -- see
+    // has_bit_range_suffix()'s comment. The gate-level view ends up
+    // showing the fan-in for the whole bus instead of just the
+    // requested bits; netlist_query_show_gate_schematic() surfaces a
+    // status note explaining this when it happens.
+    gchar *rel_no_range = strip_bit_range_suffix(rel);
+    gchar *result = g_strconcat(yosys_top_module, "/", rel_no_range, NULL);
+    g_free(rel_no_range);
     g_free(prefix);
     return result;
 }
@@ -495,6 +525,11 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     }
     g_free(detected_module_type);
     g_free(detected_instance_name);
+
+    if (has_bit_range_suffix(signal_path)) {
+        status_text("GTKWAVE | Gate-level schematic doesn't support bit-range slicing -- "
+                   "showing the fan-in for the whole bus instead.\n");
+    }
 
     gchar *png_path = NULL;
     ok = render_svg_to_png(svg_path, &png_path, &error);
