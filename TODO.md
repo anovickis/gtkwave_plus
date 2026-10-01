@@ -485,6 +485,16 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   real WCP `add_items` command; confirmed no regression for plain
   scalars and no false-positive matching for a genuinely nonexistent
   name.
+- **Added "Manage Compressed Spans..." list window.** Every other "list
+  of things" feature this session built (List X, Time-Span Comments,
+  Group Manager) got one; Compress Time Range didn't -- the only way to
+  see/remove an active span was clicking its tiny on-canvas "+" marker.
+  New Edit > Manage Compressed Spans..., with "Go To"/"Uncompress" per
+  row, reusing the existing `time_compress_span_count()`/`span_get()`/
+  `remove_span_at()` accessors unchanged. Verified via gdb: opened the
+  real window, confirmed the real row's label text, clicked the real
+  "Uncompress" button and confirmed the span was actually removed and
+  the window correctly rebuilds to "No compressed spans."
 
 ## Up next, in order
 
