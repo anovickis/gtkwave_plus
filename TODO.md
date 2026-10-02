@@ -712,10 +712,38 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   **wire** (netlistsvg's SVG doesn't give connecting-line paths their
   own net identity, only gate/port boxes do -- would need patching
   netlistsvg itself or a different renderer); the incremental
-  filter/expand/dissolve "Cone Window" interaction model (see the
-  scoped plan below -- this round's `submod`/one-hop-selection findings
-  are its foundation, but the click-to-expand/dissolve UI itself isn't
-  built yet).
+  filter/expand/dissolve "Cone Window" interaction model for the
+  gate-level view (see the scoped plan below -- this round's
+  `submod`/one-hop-selection findings are its foundation, but the
+  click-to-expand/dissolve UI itself isn't built yet).
+- **Depth-limited "Cone Window" rendering for the RTL schematic view.**
+  The smaller sibling half of the Cone Window plan (see below): the
+  view now starts small (a 3-hop fan-in cone by default) and grows on
+  request, instead of always rendering the full transitive cone.
+  Correction to this item's own original scoping note (written before
+  implementation): `GwNetlistQueryLimits` turned out NOT to be reusable
+  here as first thought -- it filters a flat `GwNetlistEdge` list by
+  *hierarchical path divergence*, which only works because every edge
+  there has a resolvable path, whereas a cone's DOT graph is mostly
+  unnamed structural nodes (Assignment/Conditional/...) with nothing to
+  compare, so that notion of "depth" can't prune them. Built a client-
+  side graph-hop BFS instead, directly over the DOT text's own edges
+  (reverse-adjacency from `Na -> Nb` lines, walked backward from the
+  query root) -- a different, arguably more natural notion of "depth"
+  for a diagram (hop count through the graph actually being drawn)
+  than hierarchical path proximity. New toolbar "Depth:" spinner (0 =
+  unlimited, the old behavior); double-clicking a node marked
+  "(double-click: more)" at the current depth boundary instead
+  increments the limit by 2 and re-renders, keeping the spinner in
+  sync; navigating to a new root (Back, or double-clicking a resolved
+  node) resets the depth back to the small default. Verified via gdb
+  against a live instance: default depth-3 render of
+  `cpu_top.alu_result` came back as 13 nodes (3 correctly marked
+  depth_truncated) vs. the unlimited render's 20; double-clicking a
+  truncated node bumped the depth to 5 and grew to 19 nodes (1
+  remaining truncated) with the spinner's displayed value confirmed in
+  sync; driving the spinner directly down to depth 1 correctly shrank
+  the render to 2 nodes.
 
 ## Up next, in order
 
@@ -788,17 +816,8 @@ the conversation history for the full reasoning behind this ordering.
      connecting lines themselves, only to the boxes at either end. Would
      need patching netlistsvg or a different renderer; out of scope
      here.
-   - A parallel, much smaller opportunity for the RTL (slang-netlist)
-     schematic view: `GwNetlistQueryLimits.max_depth` already exists
-     (shipped earlier this project for the Show Drivers/Loads results
-     windows) but isn't wired into `schematic_view.c`'s own cone
-     rendering, which always queries unlimited depth. Passing a shallow
-     depth + a similar "double-click an edge node to re-query one level
-     deeper" interaction would give a cheaper, smaller-lift version of
-     the same "start small, expand" idea for the RTL view specifically,
-     reusing existing infrastructure instead of Yosys selection algebra.
-     Worth doing as a standalone smaller item, independent of the gate-
-     view work above.
+   - The RTL (slang-netlist) schematic view's own "start small, expand"
+     sibling piece is now done -- see above.
 
 4. **RTL schematic layout editing** (reposition instances by hand,
    print/capture an edited layout). What's left of the original
