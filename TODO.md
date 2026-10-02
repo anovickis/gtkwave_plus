@@ -556,6 +556,36 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   later resize doesn't fight the user's own zoom choice). A window-
   manager-less headless display made this hard to verify by eye --
   this was confirmed at the logic level instead.
+- **Back navigation for the RTL schematic view.** Double-clicking a node
+  now navigates the same window to that signal's cone in place, pushing
+  the signal navigated away from onto a per-window history stack, rather
+  than spawning a new top-level window per hop (found while picking this
+  up: double-click had regressed to the latter at some point, even
+  though the "Make the schematic actually clickable" entry above already
+  described in-place "push/pop-into-instance navigation" as the
+  intended behavior). A new "Back" toolbar button (disabled until
+  there's history to pop) returns to the previous signal. Verified via
+  gdb against a live instance: drove the real `on_image_button_press`
+  double-click handler with a synthetic event at a real node's
+  coordinates (first at the same signal, then after retargeting the
+  node's resolved path to a distinct signal), confirmed the window
+  title/`signal_path`/history stack/Back-button sensitivity all updated
+  correctly, then drove the real `on_back_clicked` handler and confirmed
+  it popped back to the exact prior signal and disabled itself again.
+- **Configurable schematic edge colors.** The X/Z/driven-high edge
+  colors the RTL schematic's recoloring feature annotates nets with
+  were hardcoded ("red"/"darkorange"/"forestgreen"). Added three new
+  `.gtkwaverc` options (`schematic_color_x`/`schematic_color_z`/
+  `schematic_color_active`, documented in `gtkwaverc.5`) following the
+  existing `rc.c` key-value pattern, falling back to the previous
+  hardcoded defaults when unset. Verified the rc-parsing path end-to-end
+  via gdb against a live instance (`insert_rc_variable()` with a real
+  `"schematic_color_x #112233"` line, confirmed `GLOBALS->
+  schematic_color_x` was set); verified the color-selection logic itself
+  (defaults preserved, overrides take effect, idle nets still get no
+  color) via a standalone compiled unit test of the copied logic, since
+  the real function is `static` inside a translation unit that pulls in
+  the whole app.
 
 ## Up next, in order
 
@@ -573,10 +603,11 @@ the conversation history for the full reasoning behind this ordering.
 
 3. **Editable/exportable schematic mode** (reposition instances,
    print/capture, collapse/expand a module to a black box, drag a
-   schematic signal into the wave pane), **configurable color themes**,
-   **zoom/pan + a navigation-only "last view" undo**. Polish tier -- do
+   schematic signal into the wave pane). Polish tier -- do
    opportunistically alongside other schematic work rather than as a
-   standalone effort.
+   standalone effort. (Configurable color themes and navigation-only
+   "last view" undo, also originally bundled here, are now done -- see
+   above. Zoom/pan was already done before this list existed.)
 
 4. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
