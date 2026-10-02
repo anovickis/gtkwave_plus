@@ -606,6 +606,36 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   loop in this same session wedged a gdb/gtkwave pair badly enough to
   need a hard kill -- not worth the risk for boilerplate that's a
   verbatim copy of the already-shipped `choose_source_files()` pattern).
+- **Drag a schematic signal into the wave pane.** A resolved node on the
+  RTL schematic can now be dragged off the diagram and dropped onto the
+  main signal/wave pane to add it as a trace, alongside the existing
+  right-click "Add to Waveform" item. Reuses the existing
+  `WAVE_DRAG_TARGET_TCL`/`WAVE_DRAG_INFO_TCL` drag format the hierarchy
+  tree view and search box already drag from (`treesearch.c`'s
+  `dnd_setup()`, `tcl_helper.c`'s `make_single_tcl_list_name()`) --
+  `GwSignalList` already accepts drops of that format
+  (`signal_list.c`), so no destination-side code was needed, only a
+  manually-driven drag source on the schematic's event box (press arms
+  it, motion past GTK's drag threshold starts it, mirroring
+  `GwSignalList`'s own manual drag-begin rather than
+  `gtk_drag_source_set()`'s automatic one). Gate-level view untouched --
+  it has no click/hit-testing machinery to begin with (same scoping as
+  the earlier Add to Waveform item). Verified via gdb against a live
+  instance: pressing on a resolved node correctly armed the drag state
+  (path/coordinates captured) while leaving the existing single-click
+  status-text behavior intact; releasing without exceeding the drag
+  threshold correctly cleared it again; a sub-threshold motion left the
+  armed state untouched (no premature drag); and the actual payload-
+  building call (`make_single_tcl_list_name()`) produced the exact
+  expected Tcl-list string (`"{net top max_reached_reg} "`) for the
+  live node. Didn't force the real `gtk_drag_begin_with_coordinates()`
+  grab/drop through to completion -- same headless-Xvfb/nested-GTK-
+  loop hazard as the Export Image item above (confirmed again this
+  session: a `finish` through a gdb-issued nested call that hit a
+  breakpoint reliably wedges this harness; forcing an immediate
+  `return` from the breakpointed frame instead, without ever calling
+  `finish`, is the safe pattern and is now the going-forward approach
+  for this project rather than something to keep re-discovering).
 
 ## Up next, in order
 
@@ -622,12 +652,14 @@ the conversation history for the full reasoning behind this ordering.
    need.
 
 3. **Editable schematic mode** (reposition instances, collapse/expand a
-   module to a black box, drag a schematic signal into the wave pane --
-   this last one is partly covered already by the right-click "Add to
-   Waveform" item on the RTL view). Polish tier -- do opportunistically
-   alongside other schematic work rather than as a standalone effort.
-   (Configurable color themes, navigation-only "last view" undo, and
-   print/capture (Export Image), all originally bundled here, are now
+   module to a black box). What's left of the original bundle -- these
+   two need a real editable-layout data model (Graphviz's auto-layout
+   doesn't have a notion of a user-repositioned node, and collapsing a
+   module to a black box needs slang-netlist-side module-boundary
+   awareness the current fan-in-cone query doesn't have), so this is
+   real standalone work, not a quick pickup. (Configurable color
+   themes, navigation-only "last view" undo, print/capture (Export
+   Image), and drag-to-wave-pane, all originally bundled here, are now
    done -- see above. Zoom/pan was already done before this list
    existed.)
 
