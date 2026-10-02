@@ -11,6 +11,7 @@
 #include "status.h"
 #include "signalwindow.h"
 #include "analyzer.h"
+#include "tcl_helper.h"
 
 // Pixel-space DPI used for both the displayed PNG and the coordinate math
 // below -- fixed explicitly (rather than relying on Graphviz's own
@@ -58,6 +59,13 @@ typedef struct
     GPtrArray *history; /* gchar*, signal paths navigated away from via
                          double-click, most-recent-last; "Back" pops this */
     GPtrArray *nodes; /* SchematicNodeInfo*, current layout; rebuilt on refresh */
+    gboolean drag_pending; /* a left-press landed on a resolved node; waiting to
+                            see if it turns into a drag (see on_image_motion_notify())
+                            or just a click (released before the threshold) */
+    gdouble drag_start_x, drag_start_y;
+    gchar *drag_full_path; /* the pressed node's signal path, read back by
+                            on_image_drag_data_get() once a drag actually starts --
+                            NULL whenever drag_pending is FALSE */
     GdkPixbuf *original_pixbuf; /* most recent render at 1.0 zoom (SCHEMATIC_DPI); the
                                  displayed image is this, rescaled by `zoom` */
     gdouble zoom; /* 1.0 = original size; click coordinates are divided by
@@ -82,6 +90,7 @@ static void schematic_state_free(gpointer data)
         g_ptr_array_unref(state->history);
     }
     g_free(state->signal_path);
+    g_free(state->drag_full_path);
     g_free(state);
 }
 
@@ -787,6 +796,11 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
     }
 
     if (event->button == 1 && event->type == GDK_2BUTTON_PRESS) {
+        // A double-click is always preceded by its own single-click press,
+        // which may have armed a drag below -- cancel it so an in-between
+        // wiggle of the mouse can't turn this into an unwanted drag.
+        state->drag_pending = FALSE;
+
         if (node->full_path != NULL) {
             schematic_navigate_to(state, node->full_path);
         } else if (node->unresolved) {
@@ -812,10 +826,103 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
         }
         status_text(msg);
         g_free(msg);
+
+        // Arms a possible drag-to-waveform-pane gesture (see
+        // on_image_motion_notify()); only a resolved signal node is worth
+        // dragging anywhere.
+        if (node->full_path != NULL) {
+            state->drag_pending = TRUE;
+            state->drag_start_x = event->x;
+            state->drag_start_y = event->y;
+            g_free(state->drag_full_path);
+            state->drag_full_path = g_strdup(node->full_path);
+        }
+
         return TRUE;
     }
 
     return FALSE;
+}
+
+// Checked on every pointer move once a left-press has armed a possible
+// drag (see on_image_button_press()) -- once the mouse has moved far
+// enough from the press point, actually starts a GTK drag carrying the
+// pressed node's signal path, using the same WAVE_DRAG_TARGET_TCL/
+// WAVE_DRAG_INFO_TCL format the hierarchy tree view and search box already
+// drag from (treesearch.c's dnd_setup()) -- GwSignalList already accepts
+// drops of that format (signal_list.c), so no destination-side change is
+// needed.
+static gboolean on_image_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+{
+    SchematicState *state = user_data;
+
+    if (!state->drag_pending || state->drag_full_path == NULL) {
+        return FALSE;
+    }
+
+    if (!gtk_drag_check_threshold(
+            widget, (gint)state->drag_start_x, (gint)state->drag_start_y, (gint)event->x,
+            (gint)event->y)) {
+        return FALSE;
+    }
+
+    gchar *target_tcl = g_strdup(WAVE_DRAG_TARGET_TCL);
+    GtkTargetEntry targets[] = {{
+        .target = target_tcl,
+        .flags = 0,
+        .info = WAVE_DRAG_INFO_TCL,
+    }};
+    GtkTargetList *target_list = gtk_target_list_new(targets, G_N_ELEMENTS(targets));
+
+    gtk_drag_begin_with_coordinates(widget,
+                                    target_list,
+                                    GDK_ACTION_COPY,
+                                    GDK_BUTTON_PRIMARY,
+                                    (GdkEvent *)event,
+                                    (gint)state->drag_start_x,
+                                    (gint)state->drag_start_y);
+
+    gtk_target_list_unref(target_list);
+    g_free(target_tcl);
+
+    state->drag_pending = FALSE;
+    return TRUE;
+}
+
+static gboolean
+on_image_button_release(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+    (void)widget;
+    (void)event;
+    SchematicState *state = user_data;
+    state->drag_pending = FALSE;
+    return FALSE;
+}
+
+// Supplies the dragged node's signal path once a drag started by
+// on_image_motion_notify() is actually dropped somewhere -- same Tcl-list
+// string format add_dnd_from_tree_window()/add_dnd_from_searchbox()
+// (tcl_helper.c) already build for a single entry.
+static void on_image_drag_data_get(GtkWidget *widget, GdkDragContext *dc,
+                                   GtkSelectionData *selection_data, guint info, guint t,
+                                   gpointer user_data)
+{
+    (void)widget;
+    (void)dc;
+    (void)info;
+    (void)t;
+    SchematicState *state = user_data;
+
+    if (state->drag_full_path == NULL) {
+        return;
+    }
+
+    char *text = make_single_tcl_list_name(state->drag_full_path, NULL, 0, 0);
+    if (text != NULL) {
+        gtk_selection_data_set(
+            selection_data, GDK_SELECTION_TYPE_STRING, 8, (guchar *)text, strlen(text));
+        free_2(text);
+    }
 }
 
 static void refresh_schematic(SchematicState *state)
@@ -1253,8 +1360,19 @@ void netlist_query_show_schematic(const char *signal_path)
 
     g_object_set_data_full(G_OBJECT(window), "schematic-state", state, schematic_state_free);
 
-    gtk_widget_add_events(event_box, GDK_BUTTON_PRESS_MASK);
+    gtk_widget_add_events(event_box,
+                         GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+                             GDK_POINTER_MOTION_MASK);
     g_signal_connect(event_box, "button-press-event", G_CALLBACK(on_image_button_press), state);
+    g_signal_connect(event_box, "button-release-event", G_CALLBACK(on_image_button_release),
+                     state);
+    g_signal_connect(event_box, "motion-notify-event", G_CALLBACK(on_image_motion_notify), state);
+    // No gtk_drag_source_set() -- the drag is started manually, from
+    // on_image_motion_notify(), exactly like GwSignalList's own
+    // motion_notify_event() (signal_list.c) does; that registration call is
+    // only needed to let GTK auto-detect a drag itself, which neither view
+    // relies on.
+    g_signal_connect(event_box, "drag-data-get", G_CALLBACK(on_image_drag_data_get), state);
 
     g_signal_connect(scrolled, "size-allocate", G_CALLBACK(on_scrolled_size_allocate_fit_once),
                      state);
