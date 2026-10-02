@@ -114,10 +114,16 @@ static void set_zoom(SchematicState *state, gdouble new_zoom)
     apply_zoom(state);
 }
 
-static void zoom_to_fit(SchematicState *state)
+// Returns FALSE if `scrolled` doesn't have a usable allocation yet (its
+// first size-allocate can legitimately fire with a placeholder 1x1-ish
+// size before the window manager finishes negotiating the toplevel's
+// real geometry) -- callers that only get one shot at fitting (see
+// on_scrolled_size_allocate_fit_once() below) need to know whether this
+// one actually took effect, rather than assuming it always does.
+static gboolean zoom_to_fit(SchematicState *state)
 {
     if (state->original_pixbuf == NULL || state->scrolled == NULL) {
-        return;
+        return FALSE;
     }
 
     gint avail_w = gtk_widget_get_allocated_width(state->scrolled);
@@ -125,7 +131,7 @@ static void zoom_to_fit(SchematicState *state)
     gint orig_w = gdk_pixbuf_get_width(state->original_pixbuf);
     gint orig_h = gdk_pixbuf_get_height(state->original_pixbuf);
     if (avail_w <= 1 || avail_h <= 1 || orig_w <= 0 || orig_h <= 0) {
-        return;
+        return FALSE;
     }
 
     // A little margin so the fitted image isn't flush against the
@@ -133,6 +139,7 @@ static void zoom_to_fit(SchematicState *state)
     gdouble scale_w = (gdouble)(avail_w - 4) / (gdouble)orig_w;
     gdouble scale_h = (gdouble)(avail_h - 4) / (gdouble)orig_h;
     set_zoom(state, MIN(scale_w, scale_h));
+    return TRUE;
 }
 
 // slang-netlist's DOT node labels are its own generic descriptions, e.g.
@@ -970,18 +977,26 @@ static void on_zoom_100_clicked(GtkButton *button, gpointer user_data)
 
 // One-shot: fires on the scrolled window's first real size-allocate (at
 // construction time it hasn't been realized yet, so fitting to it right
-// away would just measure a 0x0/default area), then immediately
-// disconnects itself -- later refreshes (marker moves) preserve whatever
-// zoom the user has since chosen, they don't keep re-fitting. Tied to the
-// widget's own signal (rather than e.g. a g_idle_add()) so it can't
-// outlive/dangle past the window being closed.
+// away would just measure a 0x0/default area), then disconnects itself
+// -- later refreshes (marker moves) preserve whatever zoom the user has
+// since chosen, they don't keep re-fitting. Tied to the widget's own
+// signal (rather than e.g. a g_idle_add()) so it can't outlive/dangle
+// past the window being closed.
+//
+// Only disconnects once zoom_to_fit() actually took effect: a toplevel's
+// very first size-allocate can legitimately report a placeholder size
+// before the window manager finishes negotiating its real geometry, and
+// disconnecting on that miss would leave the diagram stuck at native
+// (1.0 zoom) size forever, with no further automatic fit -- a tiny
+// diagram stranded in a corner of a much bigger window.
 static void on_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAllocation *allocation,
                                               gpointer user_data)
 {
     (void)allocation;
-    zoom_to_fit((SchematicState *)user_data);
-    g_signal_handlers_disconnect_by_func(widget, (gpointer)on_scrolled_size_allocate_fit_once,
-                                         user_data);
+    if (zoom_to_fit((SchematicState *)user_data)) {
+        g_signal_handlers_disconnect_by_func(widget, (gpointer)on_scrolled_size_allocate_fit_once,
+                                             user_data);
+    }
 }
 
 void netlist_query_show_schematic(const char *signal_path)

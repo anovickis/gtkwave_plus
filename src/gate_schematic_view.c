@@ -405,10 +405,14 @@ static void gate_set_zoom(GateSchematicState *state, gdouble new_zoom)
     gate_apply_zoom(state);
 }
 
-static void gate_zoom_to_fit(GateSchematicState *state)
+// Returns FALSE if `scrolled` doesn't have a usable allocation yet (see
+// zoom_to_fit() in schematic_view.c for why that's a real, not just
+// theoretical, case) -- the one-shot fit-on-first-size-allocate handler
+// below needs to know whether this call actually took effect.
+static gboolean gate_zoom_to_fit(GateSchematicState *state)
 {
     if (state->original_pixbuf == NULL || state->scrolled == NULL) {
-        return;
+        return FALSE;
     }
 
     gint avail_w = gtk_widget_get_allocated_width(state->scrolled);
@@ -416,12 +420,13 @@ static void gate_zoom_to_fit(GateSchematicState *state)
     gint orig_w = gdk_pixbuf_get_width(state->original_pixbuf);
     gint orig_h = gdk_pixbuf_get_height(state->original_pixbuf);
     if (avail_w <= 1 || avail_h <= 1 || orig_w <= 0 || orig_h <= 0) {
-        return;
+        return FALSE;
     }
 
     gdouble scale_w = (gdouble)(avail_w - 4) / (gdouble)orig_w;
     gdouble scale_h = (gdouble)(avail_h - 4) / (gdouble)orig_h;
     gate_set_zoom(state, MIN(scale_w, scale_h));
+    return TRUE;
 }
 
 static void on_gate_zoom_in_clicked(GtkButton *button, gpointer user_data)
@@ -450,13 +455,18 @@ static void on_gate_zoom_100_clicked(GtkButton *button, gpointer user_data)
     gate_set_zoom((GateSchematicState *)user_data, 1.0);
 }
 
+// Only disconnects once gate_zoom_to_fit() actually took effect -- see
+// on_scrolled_size_allocate_fit_once() in schematic_view.c for why a
+// toplevel's first size-allocate can't be trusted to carry its real
+// geometry.
 static void on_gate_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAllocation *allocation,
                                                     gpointer user_data)
 {
     (void)allocation;
-    gate_zoom_to_fit((GateSchematicState *)user_data);
-    g_signal_handlers_disconnect_by_func(
-        widget, (gpointer)on_gate_scrolled_size_allocate_fit_once, user_data);
+    if (gate_zoom_to_fit((GateSchematicState *)user_data)) {
+        g_signal_handlers_disconnect_by_func(
+            widget, (gpointer)on_gate_scrolled_size_allocate_fit_once, user_data);
+    }
 }
 
 void netlist_query_show_gate_schematic(const char *signal_path)
