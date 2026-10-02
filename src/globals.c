@@ -357,6 +357,9 @@ static const struct Global globals_base_values = {
     1, /* possibly_use_rc_defaults 319 */
     NULL, /* editor_string */
     FALSE, /* editor_run_in_terminal */
+    NULL, /* schematic_color_x */
+    NULL, /* schematic_color_z */
+    NULL, /* schematic_color_active */
 
     /*
      * regex.c
@@ -1093,6 +1096,12 @@ void reload_into_new_context_2(void)
 
     strcpy2_into_new_context(new_globals, &new_globals->argvlist, &GLOBALS->argvlist);
     strcpy2_into_new_context(new_globals, &new_globals->editor_name, &GLOBALS->editor_name);
+    strcpy2_into_new_context(
+        new_globals, &new_globals->schematic_color_x, &GLOBALS->schematic_color_x);
+    strcpy2_into_new_context(
+        new_globals, &new_globals->schematic_color_z, &GLOBALS->schematic_color_z);
+    strcpy2_into_new_context(
+        new_globals, &new_globals->schematic_color_active, &GLOBALS->schematic_color_active);
     strcpy2_into_new_context(new_globals,
                              &new_globals->fontname_logfile,
                              &GLOBALS->fontname_logfile);

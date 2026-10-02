@@ -213,6 +213,41 @@ int f_editor_run_in_terminal(const char *str)
     return (0);
 }
 
+// Graphviz accepts both X11 color names ("red") and "#rrggbb" hex, same as
+// the color_make()-generated f_color_* setters above use for GwColorTheme --
+// but these three feed directly into DOT text for the schematic view's edge
+// recoloring (edge_color_for_value() in schematic_view.c) rather than a
+// GwColor, so they're stored as plain strings instead.
+int f_schematic_color_x(const char *str)
+{
+    DEBUG(printf("f_schematic_color_x(\"%s\")\n", str));
+    if (GLOBALS->schematic_color_x) {
+        free_2(GLOBALS->schematic_color_x);
+    }
+    GLOBALS->schematic_color_x = (char *)strdup_2(str);
+    return (0);
+}
+
+int f_schematic_color_z(const char *str)
+{
+    DEBUG(printf("f_schematic_color_z(\"%s\")\n", str));
+    if (GLOBALS->schematic_color_z) {
+        free_2(GLOBALS->schematic_color_z);
+    }
+    GLOBALS->schematic_color_z = (char *)strdup_2(str);
+    return (0);
+}
+
+int f_schematic_color_active(const char *str)
+{
+    DEBUG(printf("f_schematic_color_active(\"%s\")\n", str));
+    if (GLOBALS->schematic_color_active) {
+        free_2(GLOBALS->schematic_color_active);
+    }
+    GLOBALS->schematic_color_active = (char *)strdup_2(str);
+    return (0);
+}
+
 int f_enable_fast_exit(const char *str)
 {
     DEBUG(printf("f_enable_fast_exit(\"%s\")\n", str));
@@ -835,6 +870,9 @@ static struct rc_entry rcitems[] = {{"accel", f_accel},
                                     {"ruler_origin", f_ruler_origin},
                                     {"ruler_step", f_ruler_step},
                                     {"scale_to_time_dimension", f_scale_to_time_dimension},
+                                    {"schematic_color_active", f_schematic_color_active},
+                                    {"schematic_color_x", f_schematic_color_x},
+                                    {"schematic_color_z", f_schematic_color_z},
                                     {"show_base_symbols", f_show_base_symbols},
                                     {"show_grid", f_show_grid},
                                     {"sst_dbl_action_type", f_sst_dbl_action_type},

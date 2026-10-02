@@ -536,6 +536,23 @@ followed by the user\'s home directory.
     default for this is \* which means that time dimension conversion is
     disabled.
 
+**schematic_color_active** \<*value*\>
+
+:   edge color for a driven-high/active net in the Signal \> Show Schematic
+    view (an X11 color name or \"#rrggbb\" hex). Default is
+    \"forestgreen\".
+
+**schematic_color_x** \<*value*\>
+
+:   edge color for an X-like net in the Signal \> Show Schematic view (an
+    X11 color name or \"#rrggbb\" hex). Default is \"red\".
+
+**schematic_color_z** \<*value*\>
+
+:   edge color for a Z (high-impedance) net in the Signal \> Show
+    Schematic view (an X11 color name or \"#rrggbb\" hex). Default is
+    \"darkorange\".
+
 **show_base_symbols** \<*value*\>
 
 :   A nonzero value (default) indicates that the numeric base symbols

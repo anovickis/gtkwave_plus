@@ -296,6 +296,12 @@ annotate_dot(const gchar *dot_text, GHashTable *leaf_to_path, GwTime time, Value
 // default color) for a clean zero, an empty value, or don't-care -- so a
 // schematic full of idle nets doesn't turn into a wall of color, only the
 // notable ones do.
+//
+// The three colors themselves are configurable via .gtkwaverc
+// (schematic_color_x/schematic_color_z/schematic_color_active -- see
+// rc.c), falling back to these defaults when unset. Graphviz accepts
+// either an X11 name or "#rrggbb" hex for either the default or a
+// user-supplied override.
 static const gchar *edge_color_for_value(const gchar *value)
 {
     if (value == NULL || value[0] == '\0') {
@@ -316,13 +322,14 @@ static const gchar *edge_color_for_value(const gchar *value)
     }
 
     if (has_x) {
-        return "red";
+        return GLOBALS->schematic_color_x != NULL ? GLOBALS->schematic_color_x : "red";
     }
     if (has_z) {
-        return "darkorange";
+        return GLOBALS->schematic_color_z != NULL ? GLOBALS->schematic_color_z : "darkorange";
     }
     if (has_active) {
-        return "forestgreen";
+        return GLOBALS->schematic_color_active != NULL ? GLOBALS->schematic_color_active
+                                                        : "forestgreen";
     }
     return NULL;
 }
@@ -365,13 +372,15 @@ recolor_dot_edges(const gchar *dot_text, GHashTable *leaf_to_path, GwTime time, 
                         const gchar *color = edge_color_for_value(value);
                         if (color != NULL) {
                             gchar *escaped_label = dot_escape(label);
+                            gchar *escaped_color = dot_escape(color);
                             g_string_append_printf(out,
                                                    "%s[label=\"%s\", color=\"%s\", penwidth=2]%s",
                                                    prefix,
                                                    escaped_label,
-                                                   color,
+                                                   escaped_color,
                                                    trailing);
                             g_free(escaped_label);
+                            g_free(escaped_color);
                             handled = TRUE;
                         }
                         g_free(value);

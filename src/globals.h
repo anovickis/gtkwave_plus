@@ -397,6 +397,10 @@ struct Global
     int possibly_use_rc_defaults; /* from rc.c 337 */
     char *editor_name; /* from rc.c */
     gboolean editor_run_in_terminal; /* from rc.c */
+    char *schematic_color_x; /* from rc.c; Graphviz color name/hex for an X-like net in the
+                              schematic view's edge recoloring, or NULL for the built-in default */
+    char *schematic_color_z; /* from rc.c; same, for a Z (high-impedance) net */
+    char *schematic_color_active; /* from rc.c; same, for a driven-high/active net */
 
     /*
      * regex.c
