@@ -1,11 +1,26 @@
 #include <config.h>
 #include <gtkwave.h>
 #include <glib/gstdio.h>
+#include <json-glib/json-glib.h>
+#include <stdio.h>
 #include <string.h>
 #include "gate_schematic_view.h"
 #include "globals.h"
 #include "netlist_query_ui.h"
+#include "source_panel.h"
 #include "status.h"
+
+// Pixel-space DPI used for both the displayed PNG and the -Tplain
+// hit-testing coordinate math below -- same reasoning, and the same
+// value, as schematic_view.c's SCHEMATIC_DPI: fixed explicitly (rather
+// than relying on Graphviz's own default) so the two stay in exact
+// agreement. Rendering the PNG directly via `dot -Tpng` (rather than the
+// SVG + rsvg-convert pipeline this file used before) is what makes that
+// guarantee possible -- rsvg-convert's own DPI handling introduced a
+// small but real mismatch against -Tplain's inch-based coordinates when
+// measured directly against a real render (confirmed empirically), where
+// `dot -Tpng` at a fixed -Gdpi is exact by construction.
+#define GATE_SCHEMATIC_DPI 96.0
 
 // Translates gtkwave's own dot-delimited hierarchical path (e.g.
 // "tb.dut.u_counter.count_q") into Yosys's `select` syntax
@@ -197,21 +212,195 @@ static gboolean yosys_error_suggests_testbench(const gchar *message)
            strstr(message, "$stop' executed") != NULL);
 }
 
-static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
-                          gchar **out_svg_path, GError **error)
+// Yosys's own dot writer always emits `rankdir="LR";` (left-to-right
+// flow) and `remincross=true;` (crossing minimization) unconditionally --
+// confirmed by inspecting its generated output directly against this
+// project's own test designs -- but never sets `splines`, so Graphviz
+// falls back to its own default curved/diagonal spline routing. A real
+// schematic's wires are only ever vertical or horizontal; inserting
+// "ortho" here (plus a little breathing room via nodesep/ranksep) is what
+// actually produces that look. Done as a post-process on the raw DOT
+// text rather than patching Yosys itself, since Yosys is a separate,
+// external tool this project doesn't maintain.
+static gchar *inject_ortho_splines(const gchar *dot_text)
 {
-    gchar *svg_path = NULL;
-    gint svg_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.svg", &svg_path, error);
-    if (svg_fd < 0) {
+    const gchar *marker = "rankdir=\"LR\";";
+    const gchar *pos = strstr(dot_text, marker);
+    if (pos != NULL) {
+        pos += strlen(marker);
+    } else {
+        // Defensive fallback if Yosys ever changes its own output -- still
+        // correct, just slightly less tidy (right after the opening brace
+        // instead of alongside the other graph-level attributes).
+        pos = strchr(dot_text, '{');
+        if (pos == NULL) {
+            return g_strdup(dot_text);
+        }
+        pos += 1;
+    }
+
+    gchar *prefix = g_strndup(dot_text, (gsize)(pos - dot_text));
+    gchar *result = g_strconcat(
+        prefix, "\nsplines=\"ortho\";\nnodesep=\"0.4\";\nranksep=\"0.6\";", pos, NULL);
+    g_free(prefix);
+    return result;
+}
+
+// One constituent gate/wire node of the rendered diagram: a Yosys cell
+// (a module instance, rendered as a record shape) or a net/port, each
+// with its own pixel-space bounding box (for click hit-testing) and,
+// where Yosys could determine one, the HDL source location it came from
+// (from `-href`, see run_yosys() below) -- used to jump the source
+// cross-probe panel there on click. `href` is NULL for a node Yosys
+// couldn't attribute to source (e.g. an optimized-away intermediate net),
+// which is reported as such rather than silently doing nothing.
+typedef struct
+{
+    gchar *id; /* Graphviz node id, e.g. "n1" or "c15" */
+    gchar *href; /* "path:line.col-line.col", or NULL */
+    gdouble x, y, w, h; /* pixel-space, top-left corner + size */
+} GateNodeInfo;
+
+static void gate_node_info_free(gpointer data)
+{
+    GateNodeInfo *node = data;
+    g_free(node->id);
+    g_free(node->href);
+    g_free(node);
+}
+
+// Extracts {node id -> href} from Yosys's `-href`-annotated DOT text --
+// only node-definition lines carry an href (edges never do). Mirrors
+// schematic_view.c's extract_node_labels()'s same per-line-regex
+// approach.
+static GHashTable *extract_node_hrefs(const gchar *dot_text)
+{
+    GHashTable *hrefs = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    GRegex *re = g_regex_new("^(\\S+)\\s*\\[[^]]*href=\"([^\"]*)\"", 0, 0, NULL);
+    gchar **lines = g_strsplit(dot_text, "\n", -1);
+
+    for (guint i = 0; lines[i] != NULL; i++) {
+        GMatchInfo *match_info = NULL;
+        if (g_regex_match(re, lines[i], 0, &match_info)) {
+            gchar *id = g_match_info_fetch(match_info, 1);
+            gchar *href = g_match_info_fetch(match_info, 2);
+            g_hash_table_insert(hrefs, id, href);
+        }
+        g_match_info_free(match_info);
+    }
+
+    g_strfreev(lines);
+    g_regex_unref(re);
+    return hrefs;
+}
+
+// Parses Graphviz `-Tplain` output into pixel-space node bounding boxes --
+// see parse_plain_nodes() in schematic_view.c for the exact coordinate
+// math (inches, Y-up from bottom-left, flipped to Y-down pixel space);
+// identical here, just resolving each node's HDL source location (via
+// id_to_href) instead of a gtkwave signal path.
+static GPtrArray *parse_gate_plain_nodes(const gchar *plain_text, GHashTable *id_to_href)
+{
+    GPtrArray *nodes = g_ptr_array_new_with_free_func(gate_node_info_free);
+    gdouble graph_h_in = 0.0;
+    gboolean have_graph_h = FALSE;
+
+    gchar **lines = g_strsplit(plain_text, "\n", -1);
+    for (guint i = 0; lines[i] != NULL; i++) {
+        if (g_str_has_prefix(lines[i], "graph ")) {
+            gdouble scale = 0, gw = 0, gh = 0;
+            if (sscanf(lines[i], "graph %lf %lf %lf", &scale, &gw, &gh) == 3) {
+                graph_h_in = gh;
+                have_graph_h = TRUE;
+            }
+        } else if (have_graph_h && g_str_has_prefix(lines[i], "node ")) {
+            gchar name[64];
+            gdouble cx, cy, nw, nh;
+            if (sscanf(lines[i], "node %63s %lf %lf %lf %lf", name, &cx, &cy, &nw, &nh) != 5) {
+                continue;
+            }
+
+            GateNodeInfo *info = g_new0(GateNodeInfo, 1);
+            info->id = g_strdup(name);
+            info->w = nw * GATE_SCHEMATIC_DPI;
+            info->h = nh * GATE_SCHEMATIC_DPI;
+            info->x = (cx - nw / 2.0) * GATE_SCHEMATIC_DPI;
+            info->y = (graph_h_in - (cy + nh / 2.0)) * GATE_SCHEMATIC_DPI;
+
+            const gchar *href = g_hash_table_lookup(id_to_href, name);
+            info->href = href != NULL ? g_strdup(href) : NULL;
+
+            g_ptr_array_add(nodes, info);
+        }
+    }
+    g_strfreev(lines);
+
+    return nodes;
+}
+
+static GateNodeInfo *find_gate_node_at(GPtrArray *nodes, gdouble px, gdouble py)
+{
+    if (nodes == NULL) {
+        return NULL;
+    }
+    for (guint i = 0; i < nodes->len; i++) {
+        GateNodeInfo *node = g_ptr_array_index(nodes, i);
+        if (px >= node->x && px <= node->x + node->w && py >= node->y && py <= node->y + node->h) {
+            return node;
+        }
+    }
+    return NULL;
+}
+
+// Parses Yosys's `href="path:line.col-line.col"` into (path, first line)
+// and jumps the source cross-probe panel there -- same action a double-
+// click in the SST hierarchy tree already triggers elsewhere in this app.
+static void jump_to_gate_node_source(const gchar *href)
+{
+    GRegex *re = g_regex_new("^(.*):(\\d+)\\.\\d+-\\d+\\.\\d+$", 0, 0, NULL);
+    GMatchInfo *match_info = NULL;
+    gboolean matched = g_regex_match(re, href, 0, &match_info);
+
+    if (!matched) {
+        g_match_info_free(match_info);
+        g_regex_unref(re);
+        status_text("GTKWAVE | Could not parse this element's source location.\n");
+        return;
+    }
+
+    gchar *path = g_match_info_fetch(match_info, 1);
+    gchar *line_str = g_match_info_fetch(match_info, 2);
+    guint32 line_number = (guint32)g_ascii_strtoull(line_str, NULL, 10);
+
+    source_panel_show_file_line(path, line_number);
+
+    g_free(path);
+    g_free(line_str);
+    g_match_info_free(match_info);
+    g_regex_unref(re);
+}
+
+// Runs Yosys end-to-end for `top_module`/`select_expr` and returns the
+// raw DOT text it wrote (via `-format dot`), including its per-node
+// `href="path:line.col-line.col"` source-location attributes (from
+// `-href`) -- used both for click-to-source (see jump_to_gate_node_source())
+// and, after inject_ortho_splines() touches it up, as the final render
+// source. Caller owns *out_dot_text (g_free).
+static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
+                          gchar **out_dot_text, GError **error)
+{
+    gchar *dot_path = NULL;
+    gint dot_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.dot", &dot_path, error);
+    if (dot_fd < 0) {
         return FALSE;
     }
-    g_close(svg_fd, NULL);
-    // Yosys's `show -format svg -prefix <p>` writes to "<p>.svg" itself,
+    g_close(dot_fd, NULL);
+    // Yosys's `show -format dot -prefix <p>` writes to "<p>.dot" itself,
     // and refuses to write to a path that already exists as an empty
     // file -- reserve the name via g_file_open_tmp() above (for
-    // uniqueness), then let Yosys create the real file at prefix+".svg".
-    g_unlink(svg_path);
-    gchar *prefix = g_strdup(svg_path);
+    // uniqueness), then let Yosys create the real file at prefix+".dot".
+    g_unlink(dot_path);
+    gchar *prefix = g_strdup(dot_path);
 
     // -defer: parse to an AST only, deferring actual AST->RTLIL
     // compilation to the 'hierarchy' command below. Without it, a plain
@@ -230,7 +419,7 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
     }
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; flatten; opt; techmap; opt; "
-                          "select %s %%ci*; show -format svg -prefix %s -notitle",
+                          "select %s %%ci*; show -format dot -prefix %s -notitle -href",
                           top_module,
                           select_expr,
                           prefix);
@@ -244,7 +433,7 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
                    "schematic view");
         g_string_free(script, TRUE);
         g_free(prefix);
-        g_free(svg_path);
+        g_free(dot_path);
         return FALSE;
     }
 
@@ -270,13 +459,13 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
         g_clear_error(&spawn_error);
         g_free(err);
         g_free(prefix);
-        g_free(svg_path);
+        g_free(dot_path);
         return FALSE;
     }
 
-    gchar *real_svg = g_strconcat(prefix, ".svg", NULL);
+    gchar *real_dot = g_strconcat(prefix, ".dot", NULL);
     gboolean ok = g_spawn_check_wait_status(exit_status, NULL) &&
-                 g_file_test(real_svg, G_FILE_TEST_IS_REGULAR);
+                 g_file_test(real_dot, G_FILE_TEST_IS_REGULAR);
 
     if (!ok) {
         // Yosys's own log is extremely verbose (a full pass-by-pass
@@ -294,22 +483,319 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
                    "$finish/$display in an initial block). Yosys said:\n%s",
                    (tail != NULL && tail[0] != '\0') ? tail : "(no output)");
         g_free(err);
-        g_free(real_svg);
+        g_free(real_dot);
         g_free(prefix);
-        g_free(svg_path);
+        g_free(dot_path);
         return FALSE;
     }
 
     g_free(err);
     g_free(prefix);
-    g_free(svg_path);
-    *out_svg_path = real_svg;
+    g_free(dot_path);
+
+    gchar *dot_text = NULL;
+    gboolean read_ok = g_file_get_contents(real_dot, &dot_text, NULL, error);
+    g_unlink(real_dot);
+    g_free(real_dot);
+
+    if (!read_ok) {
+        return FALSE;
+    }
+
+    *out_dot_text = dot_text;
     return TRUE;
 }
 
-static gboolean render_svg_to_png(const gchar *svg_path, gchar **out_png_path, GError **error)
+// Same overall shape as run_yosys() above (same -defer/hierarchy/flatten/
+// techmap synthesis pipeline), but ending in a JSON netlist export
+// instead of a DOT render -- this is the input netlistsvg (see
+// run_netlistsvg() below) needs for its own traditional-gate-symbol
+// rendering, in place of Yosys's own generic `show` command.
+//
+// `write_json` (unlike `show`) has no per-object selection support of
+// its own (only a whole-module `-selected` flag), so getting just the
+// fan-in cone out needs a real module boundary to select on -- `submod`
+// carves the cone's cells out into a brand new module (named
+// GATE_CONE_SUBMODULE_NAME) with properly directioned, properly NAMED
+// ports automatically created at every cut wire. This is what makes
+// every cut boundary show up as a real connector/port-arrow symbol in
+// the final render (netlistsvg's `inputExt`/`outputExt` skin shapes)
+// instead of a dangling, symbol-less wire end -- confirmed empirically:
+// a plain invert-and-delete prune (this function's own earlier version)
+// left boundary wires with no port identity at all, and netlistsvg drew
+// nothing distinctive for them.
+//
+// `submod` requires memories to be already lowered to flip-flops first
+// (it refuses to touch a module that still contains `$mem`-type cells),
+// hence `memory;` ahead of `techmap` here, which this file's dot-based
+// path doesn't need (plain `show` has no such restriction).
+#define GATE_CONE_SUBMODULE_NAME "gtkwave_cone"
+
+static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr,
+                               gchar **out_json_text, GError **error)
 {
-    gchar *png_path = g_strconcat(svg_path, ".png", NULL);
+    gchar *json_path = NULL;
+    gint json_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.json", &json_path, error);
+    if (json_fd < 0) {
+        return FALSE;
+    }
+    g_close(json_fd, NULL);
+    g_unlink(json_path);
+    gchar *prefix = g_strdup(json_path);
+
+    GString *script = g_string_new("read_verilog -sv -defer");
+    for (guint i = 0; i < GLOBALS->netlist_source_files->len; i++) {
+        g_string_append_printf(
+            script, " \"%s\"", (const gchar *)g_ptr_array_index(GLOBALS->netlist_source_files, i));
+    }
+    g_string_append_printf(script,
+                          "; hierarchy -check -top %s; proc; flatten; memory; opt; techmap; opt; "
+                          "select %s %%ci*; submod -name " GATE_CONE_SUBMODULE_NAME "; "
+                          "select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
+                          top_module,
+                          select_expr,
+                          prefix);
+
+    gchar *yosys_bin = g_find_program_in_path("yosys");
+    if (yosys_bin == NULL) {
+        g_set_error(error,
+                   G_FILE_ERROR,
+                   G_FILE_ERROR_NOENT,
+                   "Could not find 'yosys' on $PATH -- required for the gate-level "
+                   "schematic view");
+        g_string_free(script, TRUE);
+        g_free(prefix);
+        g_free(json_path);
+        return FALSE;
+    }
+
+    gchar *argv[] = {yosys_bin, (gchar *)"-p", script->str, NULL};
+    gchar *out = NULL;
+    gchar *err = NULL;
+    gint exit_status = 0;
+    GError *spawn_error = NULL;
+
+    gboolean spawned = g_spawn_sync(
+        NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, &out, &err, &exit_status, &spawn_error);
+
+    g_free(yosys_bin);
+    g_string_free(script, TRUE);
+    g_free(out);
+
+    if (!spawned) {
+        g_set_error(error,
+                   G_SPAWN_ERROR,
+                   G_SPAWN_ERROR_FAILED,
+                   "Failed to run yosys: %s",
+                   spawn_error != NULL ? spawn_error->message : "unknown error");
+        g_clear_error(&spawn_error);
+        g_free(err);
+        g_free(prefix);
+        g_free(json_path);
+        return FALSE;
+    }
+
+    gchar *real_json = g_strconcat(prefix, ".json", NULL);
+    gboolean ok = g_spawn_check_wait_status(exit_status, NULL) &&
+                 g_file_test(real_json, G_FILE_TEST_IS_REGULAR);
+
+    if (!ok) {
+        gsize err_len = err != NULL ? strlen(err) : 0;
+        const gchar *tail = err_len > 800 ? err + (err_len - 800) : err;
+        g_set_error(error,
+                   G_FILE_ERROR,
+                   G_FILE_ERROR_FAILED,
+                   "yosys did not produce a gate-level netlist for this signal "
+                   "(common cause: the configured top module isn't pure "
+                   "synthesizable RTL, e.g. a testbench with an unguarded "
+                   "$finish/$display in an initial block). Yosys said:\n%s",
+                   (tail != NULL && tail[0] != '\0') ? tail : "(no output)");
+        g_free(err);
+        g_free(real_json);
+        g_free(prefix);
+        g_free(json_path);
+        return FALSE;
+    }
+
+    g_free(err);
+    g_free(prefix);
+    g_free(json_path);
+
+    gchar *json_text = NULL;
+    gboolean read_ok = g_file_get_contents(real_json, &json_text, NULL, error);
+    g_unlink(real_json);
+    g_free(real_json);
+
+    if (!read_ok) {
+        return FALSE;
+    }
+
+    *out_json_text = json_text;
+    return TRUE;
+}
+
+// Extracts {cell id -> "path:line.col-line.col"} from a Yosys JSON
+// netlist's per-cell `attributes.src` -- the same source-location data
+// Yosys's `-href` DOT output carries (see extract_node_hrefs() /
+// jump_to_gate_node_source() above, which this reuses unchanged), just
+// read from JSON here since netlistsvg needs a JSON netlist as its input
+// rather than DOT.
+static GHashTable *extract_cell_srcs_from_json(const gchar *json_text, const gchar *top_module)
+{
+    GHashTable *srcs = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+
+    JsonParser *parser = json_parser_new();
+    if (!json_parser_load_from_data(parser, json_text, -1, NULL)) {
+        g_object_unref(parser);
+        return srcs;
+    }
+
+    JsonObject *root_obj = json_node_get_object(json_parser_get_root(parser));
+    if (root_obj == NULL || !json_object_has_member(root_obj, "modules")) {
+        g_object_unref(parser);
+        return srcs;
+    }
+
+    JsonObject *modules = json_object_get_object_member(root_obj, "modules");
+    if (!json_object_has_member(modules, top_module)) {
+        g_object_unref(parser);
+        return srcs;
+    }
+
+    JsonObject *mod = json_object_get_object_member(modules, top_module);
+    if (json_object_has_member(mod, "cells")) {
+        JsonObject *cells = json_object_get_object_member(mod, "cells");
+        GList *cell_names = json_object_get_members(cells);
+        for (GList *l = cell_names; l != NULL; l = l->next) {
+            const gchar *cell_id = l->data;
+            JsonObject *cell = json_object_get_object_member(cells, cell_id);
+            if (cell != NULL && json_object_has_member(cell, "attributes")) {
+                JsonObject *attrs = json_object_get_object_member(cell, "attributes");
+                if (json_object_has_member(attrs, "src")) {
+                    const gchar *src = json_object_get_string_member(attrs, "src");
+                    if (src != NULL) {
+                        g_hash_table_insert(srcs, g_strdup(cell_id), g_strdup(src));
+                    }
+                }
+            }
+        }
+        g_list_free(cell_names);
+    }
+
+    g_object_unref(parser);
+    return srcs;
+}
+
+// Runs the `netlistsvg` CLI (https://github.com/nturley/netlistsvg,
+// MIT-licensed) on a Yosys JSON netlist -- gives traditional ANSI/MIL-
+// style gate symbols (D-shaped AND, shield-shaped OR/XOR, triangle+bubble
+// inverters, proper flip-flop boxes) via its bundled default skin, plus
+// automatic all-orthogonal routing via its ELK.js layout engine, in place
+// of Yosys's own `show` command's generic record-shaped boxes and
+// Graphviz's curved splines (see the dot/inject_ortho_splines() path
+// above, kept as a fallback for when netlistsvg isn't installed).
+// Requires Node.js + `npm install -g netlistsvg` on $PATH -- a real,
+// separate runtime dependency from yosys/Graphviz, only needed for this
+// nicer rendering; the dot-based path works without it.
+static gboolean run_netlistsvg(const gchar *json_text, gchar **out_svg_text, GError **error)
+{
+    gchar *json_path = NULL;
+    gint json_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.json", &json_path, error);
+    if (json_fd < 0) {
+        return FALSE;
+    }
+    g_close(json_fd, NULL);
+
+    if (!g_file_set_contents(json_path, json_text, -1, error)) {
+        g_unlink(json_path);
+        g_free(json_path);
+        return FALSE;
+    }
+
+    gchar *netlistsvg_bin = g_find_program_in_path("netlistsvg");
+    if (netlistsvg_bin == NULL) {
+        g_set_error(error,
+                   G_FILE_ERROR,
+                   G_FILE_ERROR_NOENT,
+                   "Could not find 'netlistsvg' on $PATH");
+        g_unlink(json_path);
+        g_free(json_path);
+        return FALSE;
+    }
+
+    gchar *svg_path = g_strconcat(json_path, ".svg", NULL);
+    gchar *argv[] = {netlistsvg_bin, json_path, (gchar *)"-o", svg_path, NULL};
+    gchar *out = NULL;
+    gchar *err = NULL;
+    gint exit_status = 0;
+    GError *spawn_error = NULL;
+
+    gboolean spawned = g_spawn_sync(
+        NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, &out, &err, &exit_status, &spawn_error);
+
+    g_free(netlistsvg_bin);
+    g_free(out);
+    g_unlink(json_path);
+    g_free(json_path);
+
+    gboolean ok = spawned && g_spawn_check_wait_status(exit_status, NULL) &&
+                 g_file_test(svg_path, G_FILE_TEST_IS_REGULAR);
+
+    if (!ok) {
+        gsize err_len = err != NULL ? strlen(err) : 0;
+        const gchar *tail = err_len > 500 ? err + (err_len - 500) : err;
+        g_set_error(error,
+                   G_SPAWN_ERROR,
+                   G_SPAWN_ERROR_FAILED,
+                   "netlistsvg failed: %s",
+                   (tail != NULL && tail[0] != '\0')
+                       ? tail
+                       : (spawn_error != NULL ? spawn_error->message : "unknown error"));
+        g_clear_error(&spawn_error);
+        g_free(err);
+        g_unlink(svg_path);
+        g_free(svg_path);
+        return FALSE;
+    }
+
+    g_free(err);
+
+    gchar *svg_text = NULL;
+    gboolean read_ok = g_file_get_contents(svg_path, &svg_text, NULL, error);
+    g_unlink(svg_path);
+    g_free(svg_path);
+
+    if (!read_ok) {
+        return FALSE;
+    }
+
+    *out_svg_text = svg_text;
+    return TRUE;
+}
+
+// Renders already-generated SVG text (from netlistsvg) to a PNG. Unlike
+// the dot path's gate_run_dot_to_png(), no DPI needs fixing: netlistsvg's
+// SVG declares plain unitless (pixel) width/height, so rsvg-convert's
+// default rendering is already exactly 1:1 with the coordinates
+// parse_netlistsvg_cell_nodes() reads out of that same SVG text --
+// confirmed empirically (rendered output pixel size exactly matches the
+// SVG's own declared width/height, regardless of rsvg-convert's DPI
+// setting, since DPI only affects physical-unit dimensions like "5in",
+// never already-unitless ones).
+static gboolean render_svg_text_to_png(const gchar *svg_text, gchar **out_png_path, GError **error)
+{
+    gchar *svg_path = NULL;
+    gint svg_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.svg", &svg_path, error);
+    if (svg_fd < 0) {
+        return FALSE;
+    }
+    g_close(svg_fd, NULL);
+
+    if (!g_file_set_contents(svg_path, svg_text, -1, error)) {
+        g_unlink(svg_path);
+        g_free(svg_path);
+        return FALSE;
+    }
 
     gchar *rsvg_bin = g_find_program_in_path("rsvg-convert");
     if (rsvg_bin == NULL) {
@@ -318,16 +804,14 @@ static gboolean render_svg_to_png(const gchar *svg_path, gchar **out_png_path, G
                    G_FILE_ERROR_NOENT,
                    "Could not find 'rsvg-convert' on $PATH -- required to display the "
                    "gate-level schematic");
-        g_free(png_path);
+        g_unlink(svg_path);
+        g_free(svg_path);
         return FALSE;
     }
 
-    gchar *argv[] = {rsvg_bin,
-                     (gchar *)"--background-color=white",
-                     (gchar *)"-o",
-                     png_path,
-                     (gchar *)svg_path,
-                     NULL};
+    gchar *png_path = g_strconcat(svg_path, ".png", NULL);
+    gchar *argv[] = {
+        rsvg_bin, (gchar *)"--background-color=white", (gchar *)"-o", png_path, svg_path, NULL};
     gchar *err = NULL;
     gint exit_status = 0;
     GError *spawn_error = NULL;
@@ -336,6 +820,8 @@ static gboolean render_svg_to_png(const gchar *svg_path, gchar **out_png_path, G
         NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &err, &exit_status, &spawn_error);
 
     g_free(rsvg_bin);
+    g_unlink(svg_path);
+    g_free(svg_path);
 
     if (!spawned || !g_spawn_check_wait_status(exit_status, NULL)) {
         g_set_error(error,
@@ -356,6 +842,191 @@ static gboolean render_svg_to_png(const gchar *svg_path, gchar **out_png_path, G
     return TRUE;
 }
 
+// Parses netlistsvg's SVG output for each top-level cell symbol's pixel-
+// space bounding box (already plain SVG pixels, see
+// render_svg_text_to_png()'s comment on why no DPI conversion is needed)
+// and cross-references the cell's HDL source location via id_to_src
+// (from the JSON netlist's own `attributes.src`, see
+// extract_cell_srcs_from_json()). Reuses GateNodeInfo/find_gate_node_at()
+// unchanged from the dot-based path -- same struct, just a different
+// source of (id, href, bbox) triples.
+static GPtrArray *parse_netlistsvg_cell_nodes(const gchar *svg_text, GHashTable *id_to_src)
+{
+    GPtrArray *nodes = g_ptr_array_new_with_free_func(gate_node_info_free);
+    GRegex *re = g_regex_new(
+        "<g s:type=\"[^\"]*\" transform=\"translate\\(([-0-9.]+),([-0-9.]+)\\)\" "
+        "s:width=\"([0-9.]+)\" s:height=\"([0-9.]+)\" id=\"cell_([^\"]*)\"",
+        0, 0, NULL);
+
+    GMatchInfo *match_info = NULL;
+    g_regex_match(re, svg_text, 0, &match_info);
+    while (g_match_info_matches(match_info)) {
+        gchar *x_str = g_match_info_fetch(match_info, 1);
+        gchar *y_str = g_match_info_fetch(match_info, 2);
+        gchar *w_str = g_match_info_fetch(match_info, 3);
+        gchar *h_str = g_match_info_fetch(match_info, 4);
+        gchar *cell_id = g_match_info_fetch(match_info, 5);
+
+        GateNodeInfo *info = g_new0(GateNodeInfo, 1);
+        info->id = cell_id; /* adopts the g_match_info_fetch() allocation */
+        info->x = g_ascii_strtod(x_str, NULL);
+        info->y = g_ascii_strtod(y_str, NULL);
+        info->w = g_ascii_strtod(w_str, NULL);
+        info->h = g_ascii_strtod(h_str, NULL);
+
+        const gchar *src = g_hash_table_lookup(id_to_src, info->id);
+        info->href = src != NULL ? g_strdup(src) : NULL;
+
+        g_ptr_array_add(nodes, info);
+
+        g_free(x_str);
+        g_free(y_str);
+        g_free(w_str);
+        g_free(h_str);
+
+        g_match_info_next(match_info, NULL);
+    }
+    g_match_info_free(match_info);
+    g_regex_unref(re);
+
+    return nodes;
+}
+
+// Renders `dot_text` (already ortho-touched-up) directly to a PNG at
+// GATE_SCHEMATIC_DPI -- see run_dot_to_png() in schematic_view.c for the
+// identical pattern/reasoning (-Gpad=0 -Gmargin=0 for an exact,
+// version-independent border, matching -Tplain's own coordinate space).
+static gboolean gate_run_dot_to_png(const gchar *dot_text, gchar **out_png_path, GError **error)
+{
+    gchar *dot_path = NULL;
+    gint dot_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.dot", &dot_path, error);
+    if (dot_fd < 0) {
+        return FALSE;
+    }
+    g_close(dot_fd, NULL);
+
+    if (!g_file_set_contents(dot_path, dot_text, -1, error)) {
+        g_unlink(dot_path);
+        g_free(dot_path);
+        return FALSE;
+    }
+
+    gchar *dot_bin = g_find_program_in_path("dot");
+    if (dot_bin == NULL) {
+        g_set_error(error,
+                   G_FILE_ERROR,
+                   G_FILE_ERROR_NOENT,
+                   "Could not find 'dot' (Graphviz) on $PATH -- required to render the "
+                   "gate-level schematic");
+        g_unlink(dot_path);
+        g_free(dot_path);
+        return FALSE;
+    }
+
+    gchar *png_path = g_strconcat(dot_path, ".png", NULL);
+    gchar dpi_arg[32];
+    g_snprintf(dpi_arg, sizeof(dpi_arg), "-Gdpi=%g", GATE_SCHEMATIC_DPI);
+    gchar *argv[] = {dot_bin,
+                     (gchar *)"-Gpad=0",
+                     (gchar *)"-Gmargin=0",
+                     dpi_arg,
+                     (gchar *)"-Tpng",
+                     (gchar *)"-o",
+                     png_path,
+                     dot_path,
+                     NULL};
+    gchar *spawn_err = NULL;
+    gint exit_status = 0;
+    GError *spawn_error = NULL;
+
+    gboolean spawned = g_spawn_sync(NULL,
+                                    argv,
+                                    NULL,
+                                    G_SPAWN_SEARCH_PATH,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    &spawn_err,
+                                    &exit_status,
+                                    &spawn_error);
+
+    g_free(dot_bin);
+    g_unlink(dot_path);
+    g_free(dot_path);
+
+    if (!spawned) {
+        g_propagate_error(error, spawn_error);
+        g_free(spawn_err);
+        g_free(png_path);
+        return FALSE;
+    }
+
+    if (!g_spawn_check_wait_status(exit_status, NULL)) {
+        g_set_error(error,
+                   G_SPAWN_ERROR,
+                   G_SPAWN_ERROR_FAILED,
+                   "dot exited with an error: %s",
+                   (spawn_err != NULL && spawn_err[0] != '\0') ? spawn_err : "(no stderr output)");
+        g_free(spawn_err);
+        g_unlink(png_path);
+        g_free(png_path);
+        return FALSE;
+    }
+
+    g_free(spawn_err);
+    *out_png_path = png_path;
+    return TRUE;
+}
+
+// Runs `dot -Tplain` on `dot_text` for hit-testing bounding boxes -- see
+// run_dot_capture() in schematic_view.c for the identical pattern.
+static gboolean gate_run_dot_to_plain(const gchar *dot_text, gchar **out_plain_text, GError **error)
+{
+    gchar *dot_path = NULL;
+    gint dot_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.dot", &dot_path, error);
+    if (dot_fd < 0) {
+        return FALSE;
+    }
+    g_close(dot_fd, NULL);
+
+    if (!g_file_set_contents(dot_path, dot_text, -1, error)) {
+        g_unlink(dot_path);
+        g_free(dot_path);
+        return FALSE;
+    }
+
+    gchar *dot_bin = g_find_program_in_path("dot");
+    if (dot_bin == NULL) {
+        g_unlink(dot_path);
+        g_free(dot_path);
+        return FALSE;
+    }
+
+    gchar *argv[] = {
+        dot_bin, (gchar *)"-Gpad=0", (gchar *)"-Gmargin=0", (gchar *)"-Tplain", dot_path, NULL};
+    gchar *out = NULL;
+    gchar *err = NULL;
+    gint exit_status = 0;
+    GError *spawn_error = NULL;
+
+    gboolean spawned = g_spawn_sync(
+        NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, &out, &err, &exit_status, &spawn_error);
+
+    g_free(dot_bin);
+    g_unlink(dot_path);
+    g_free(dot_path);
+    g_free(err);
+
+    if (!spawned || !g_spawn_check_wait_status(exit_status, NULL)) {
+        g_clear_error(&spawn_error);
+        g_free(out);
+        return FALSE;
+    }
+
+    *out_plain_text = out;
+    return TRUE;
+}
+
 typedef struct
 {
     GtkWidget *window;
@@ -363,6 +1034,7 @@ typedef struct
     GtkWidget *scrolled;
     GdkPixbuf *original_pixbuf;
     gchar *signal_path; /* only used to suggest an Export Image filename */
+    GPtrArray *nodes; /* GateNodeInfo*, this render's hit-testing data */
     gdouble zoom;
 } GateSchematicState;
 
@@ -371,6 +1043,9 @@ static void gate_schematic_state_free(gpointer data)
     GateSchematicState *state = data;
     if (state->original_pixbuf != NULL) {
         g_object_unref(state->original_pixbuf);
+    }
+    if (state->nodes != NULL) {
+        g_ptr_array_unref(state->nodes);
     }
     g_free(state->signal_path);
     g_free(state);
@@ -541,6 +1216,41 @@ static void on_gate_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAlloca
     }
 }
 
+// Click-to-source: hit-tests the click against this render's node boxes
+// (built from -Tplain, see parse_gate_plain_nodes()) and, if the node has
+// an HDL source location (most do -- cells and named nets; an
+// optimized-away intermediate net may not), jumps the source cross-probe
+// panel there. No right-click/context-menu/double-click behavior yet --
+// unlike the RTL schematic view, there's no gtkwave signal path to drive
+// Show Drivers/Loads/Add to Waveform with (Yosys's post-techmap names
+// don't map back to the original RTL signal names, see this file's own
+// header comment).
+static gboolean
+on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+    (void)widget;
+    GateSchematicState *state = user_data;
+
+    if (event->type != GDK_BUTTON_PRESS || event->button != 1) {
+        return FALSE;
+    }
+
+    gdouble zoom = state->zoom != 0.0 ? state->zoom : 1.0;
+    GateNodeInfo *node = find_gate_node_at(state->nodes, event->x / zoom, event->y / zoom);
+    if (node == NULL) {
+        return FALSE;
+    }
+
+    if (node->href != NULL) {
+        jump_to_gate_node_source(node->href);
+    } else {
+        status_text(
+            "GTKWAVE | No source location available for this element (likely optimized "
+            "away or a floating net label).\n");
+    }
+    return TRUE;
+}
+
 void netlist_query_show_gate_schematic(const char *signal_path)
 {
     GtkWindow *parent = GLOBALS->mainwindow != NULL && GTK_IS_WINDOW(GLOBALS->mainwindow)
@@ -554,9 +1264,21 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     const gchar *top_module = GLOBALS->netlist_top_module;
     gchar *select_expr = make_yosys_select(top_module, top_module, signal_path);
 
+    // netlistsvg (Node.js + `npm install -g netlistsvg`) gives real
+    // traditional gate symbols and automatic orthogonal routing; the
+    // dot/Graphviz path above is kept as a fallback for a machine that
+    // doesn't have it installed -- still a real improvement over the
+    // original SVG/rsvg-convert pipeline (orthogonal routing via
+    // inject_ortho_splines()), just boxier-looking.
+    gchar *netlistsvg_check = g_find_program_in_path("netlistsvg");
+    gboolean use_netlistsvg = netlistsvg_check != NULL;
+    g_free(netlistsvg_check);
+
     GError *error = NULL;
-    gchar *svg_path = NULL;
-    gboolean ok = run_yosys(top_module, select_expr, &svg_path, &error);
+    gchar *dot_text = NULL; /* used only when !use_netlistsvg */
+    gchar *json_text = NULL; /* used only when use_netlistsvg */
+    gboolean ok = use_netlistsvg ? run_yosys_json(top_module, select_expr, &json_text, &error)
+                                : run_yosys(top_module, select_expr, &dot_text, &error);
     g_free(select_expr);
 
     // The configured top is very often the VCD's own dump-root scope
@@ -577,7 +1299,9 @@ void netlist_query_show_gate_schematic(const char *signal_path)
         gchar *retry_select = make_yosys_select(detected_module_type, instance_prefix, signal_path);
         g_free(instance_prefix);
 
-        ok = run_yosys(detected_module_type, retry_select, &svg_path, &error);
+        ok = use_netlistsvg
+                 ? run_yosys_json(detected_module_type, retry_select, &json_text, &error)
+                 : run_yosys(detected_module_type, retry_select, &dot_text, &error);
         g_free(retry_select);
         auto_detected = ok;
     }
@@ -605,33 +1329,107 @@ void netlist_query_show_gate_schematic(const char *signal_path)
         status_text(msg);
         g_free(msg);
     }
-    g_free(detected_module_type);
-    g_free(detected_instance_name);
 
     if (has_bit_range_suffix(signal_path)) {
         status_text("GTKWAVE | Gate-level schematic doesn't support bit-range slicing -- "
                    "showing the fan-in for the whole bus instead.\n");
     }
 
-    gchar *png_path = NULL;
-    ok = render_svg_to_png(svg_path, &png_path, &error);
-    g_unlink(svg_path);
-    g_free(svg_path);
+    GdkPixbuf *pixbuf = NULL;
+    GPtrArray *nodes = NULL;
 
-    if (!ok) {
-        gchar *msg = g_strdup_printf("GTKWAVE | Rendering gate-level schematic failed: %s\n",
-                                     error != NULL ? error->message : "unknown error");
-        status_text(msg);
-        g_free(msg);
-        g_clear_error(&error);
-        return;
+    if (use_netlistsvg) {
+        gchar *svg_text = NULL;
+        ok = run_netlistsvg(json_text, &svg_text, &error);
+
+        if (!ok) {
+            gchar *msg = g_strdup_printf(
+                "GTKWAVE | Rendering gate-level schematic failed: %s\n",
+                error != NULL ? error->message : "unknown error");
+            status_text(msg);
+            g_free(msg);
+            g_clear_error(&error);
+            g_free(json_text);
+            g_free(detected_module_type);
+            g_free(detected_instance_name);
+            return;
+        }
+
+        gchar *png_path = NULL;
+        ok = render_svg_text_to_png(svg_text, &png_path, &error);
+
+        if (!ok) {
+            gchar *msg = g_strdup_printf(
+                "GTKWAVE | Rendering gate-level schematic failed: %s\n",
+                error != NULL ? error->message : "unknown error");
+            status_text(msg);
+            g_free(msg);
+            g_clear_error(&error);
+            g_free(svg_text);
+            g_free(json_text);
+            g_free(detected_module_type);
+            g_free(detected_instance_name);
+            return;
+        }
+
+        // Best-effort: used only for click-to-source. If anything here
+        // comes up empty, the schematic still displays, it just isn't
+        // clickable.
+        GHashTable *id_to_src = extract_cell_srcs_from_json(json_text, GATE_CONE_SUBMODULE_NAME);
+        nodes = parse_netlistsvg_cell_nodes(svg_text, id_to_src);
+        g_hash_table_unref(id_to_src);
+        g_free(svg_text);
+        g_free(json_text);
+
+        pixbuf = gdk_pixbuf_new_from_file(png_path, &error);
+        g_unlink(png_path);
+        g_free(png_path);
+    } else {
+        gchar *ortho_dot_text = inject_ortho_splines(dot_text);
+
+        gchar *png_path = NULL;
+        ok = gate_run_dot_to_png(ortho_dot_text, &png_path, &error);
+
+        if (!ok) {
+            gchar *msg = g_strdup_printf(
+                "GTKWAVE | Rendering gate-level schematic failed: %s\n",
+                error != NULL ? error->message : "unknown error");
+            status_text(msg);
+            g_free(msg);
+            g_clear_error(&error);
+            g_free(ortho_dot_text);
+            g_free(dot_text);
+            g_free(detected_module_type);
+            g_free(detected_instance_name);
+            return;
+        }
+
+        // Best-effort: used only for click-to-source. If -Tplain fails
+        // for some reason, the schematic still displays, it just isn't
+        // clickable.
+        gchar *plain_text = NULL;
+        if (gate_run_dot_to_plain(ortho_dot_text, &plain_text, NULL)) {
+            GHashTable *id_to_href = extract_node_hrefs(dot_text);
+            nodes = parse_gate_plain_nodes(plain_text, id_to_href);
+            g_hash_table_unref(id_to_href);
+            g_free(plain_text);
+        }
+
+        g_free(ortho_dot_text);
+        g_free(dot_text);
+
+        pixbuf = gdk_pixbuf_new_from_file(png_path, &error);
+        g_unlink(png_path);
+        g_free(png_path);
     }
 
-    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(png_path, &error);
-    g_unlink(png_path);
-    g_free(png_path);
+    g_free(detected_module_type);
+    g_free(detected_instance_name);
 
     if (pixbuf == NULL) {
+        if (nodes != NULL) {
+            g_ptr_array_unref(nodes);
+        }
         gchar *msg = g_strdup_printf("GTKWAVE | Loading gate-level schematic image failed: %s\n",
                                      error != NULL ? error->message : "unknown error");
         status_text(msg);
@@ -678,13 +1476,18 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
 
-    // Centered so a small diagram doesn't look stranded in a corner of a
-    // much bigger window -- see the identical comment in
-    // schematic_view.c's netlist_query_show_schematic().
+    // The event box exists purely to receive button-press-event -- a
+    // plain GtkImage doesn't have its own GdkWindow to route input
+    // through. Centered (see the identical comment in schematic_view.c's
+    // netlist_query_show_schematic()) so a small diagram doesn't look
+    // stranded in a corner of a much bigger window.
+    GtkWidget *event_box = gtk_event_box_new();
+    gtk_widget_set_halign(event_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(event_box, GTK_ALIGN_CENTER);
+    gtk_container_add(GTK_CONTAINER(scrolled), event_box);
+
     GtkWidget *image = gtk_image_new();
-    gtk_widget_set_halign(image, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
-    gtk_container_add(GTK_CONTAINER(scrolled), image);
+    gtk_container_add(GTK_CONTAINER(event_box), image);
 
     GateSchematicState *state = g_new0(GateSchematicState, 1);
     state->window = window;
@@ -693,7 +1496,12 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     state->zoom = 1.0;
     state->signal_path = g_strdup(signal_path);
     state->original_pixbuf = pixbuf; /* state now owns this reference */
+    state->nodes = nodes;
     gate_apply_zoom(state);
+
+    gtk_widget_add_events(event_box, GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(event_box, "button-press-event", G_CALLBACK(on_gate_image_button_press),
+                     state);
 
     g_signal_connect(zoom_in_button, "clicked", G_CALLBACK(on_gate_zoom_in_clicked), state);
     g_signal_connect(zoom_out_button, "clicked", G_CALLBACK(on_gate_zoom_out_clicked), state);
