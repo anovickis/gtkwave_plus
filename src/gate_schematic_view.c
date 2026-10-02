@@ -358,9 +358,11 @@ static gboolean render_svg_to_png(const gchar *svg_path, gchar **out_png_path, G
 
 typedef struct
 {
+    GtkWidget *window;
     GtkWidget *image;
     GtkWidget *scrolled;
     GdkPixbuf *original_pixbuf;
+    gchar *signal_path; /* only used to suggest an Export Image filename */
     gdouble zoom;
 } GateSchematicState;
 
@@ -370,6 +372,7 @@ static void gate_schematic_state_free(gpointer data)
     if (state->original_pixbuf != NULL) {
         g_object_unref(state->original_pixbuf);
     }
+    g_free(state->signal_path);
     g_free(state);
 }
 
@@ -453,6 +456,75 @@ static void on_gate_zoom_100_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     gate_set_zoom((GateSchematicState *)user_data, 1.0);
+}
+
+// See sanitize_filename_component() in schematic_view.c -- same reasoning,
+// duplicated rather than shared since these two views don't otherwise
+// share a header.
+static gchar *gate_sanitize_filename_component(const gchar *s)
+{
+    GString *out = g_string_new(NULL);
+    for (const gchar *p = s; *p != '\0'; p++) {
+        g_string_append_c(out, (*p == '/' || *p == '\\') ? '_' : *p);
+    }
+    return g_string_free(out, FALSE);
+}
+
+// See on_export_clicked() in schematic_view.c -- same reasoning (full-
+// resolution capture, independent of on-screen zoom).
+static void on_gate_export_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    GateSchematicState *state = user_data;
+
+    if (state->original_pixbuf == NULL) {
+        status_text("GTKWAVE | Nothing to export yet.\n");
+        return;
+    }
+
+    GtkWindow *parent =
+        state->window != NULL && GTK_IS_WINDOW(state->window) ? GTK_WINDOW(state->window) : NULL;
+
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
+        "Export Gate-Level Schematic Image", parent, GTK_FILE_CHOOSER_ACTION_SAVE, "_Save",
+        "_Cancel");
+    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
+
+    gchar *sanitized = gate_sanitize_filename_component(
+        state->signal_path != NULL ? state->signal_path : "gate_schematic");
+    gchar *suggested_name = g_strdup_printf("%s.png", sanitized);
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), suggested_name);
+    g_free(suggested_name);
+    g_free(sanitized);
+
+    GtkFileFilter *png_filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(png_filter, "PNG images (*.png)");
+    gtk_file_filter_add_pattern(png_filter, "*.png");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), png_filter);
+
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        gchar *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        gchar *final_path =
+            g_str_has_suffix(path, ".png") ? g_strdup(path) : g_strconcat(path, ".png", NULL);
+
+        GError *error = NULL;
+        if (!gdk_pixbuf_save(state->original_pixbuf, final_path, "png", &error, NULL)) {
+            gchar *msg = g_strdup_printf(
+                "GTKWAVE | Export failed: %s\n", error != NULL ? error->message : "unknown error");
+            status_text(msg);
+            g_free(msg);
+            g_clear_error(&error);
+        } else {
+            gchar *msg = g_strdup_printf("GTKWAVE | Exported schematic image to %s\n", final_path);
+            status_text(msg);
+            g_free(msg);
+        }
+
+        g_free(final_path);
+        g_free(path);
+    }
+
+    g_object_unref(chooser);
 }
 
 // Only disconnects once gate_zoom_to_fit() actually took effect -- see
@@ -595,6 +667,14 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     GtkWidget *zoom_100_button = gtk_button_new_with_label("1:1");
     gtk_box_pack_start(GTK_BOX(toolbar), zoom_100_button, FALSE, FALSE, 0);
 
+    GtkWidget *export_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(toolbar), export_sep, FALSE, FALSE, 4);
+
+    GtkWidget *export_button = gtk_button_new_with_label("Export Image\xe2\x80\xa6");
+    gtk_widget_set_tooltip_text(export_button,
+                                "Save the diagram (at full resolution) to a PNG file");
+    gtk_box_pack_start(GTK_BOX(toolbar), export_button, FALSE, FALSE, 0);
+
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
 
@@ -607,9 +687,11 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     gtk_container_add(GTK_CONTAINER(scrolled), image);
 
     GateSchematicState *state = g_new0(GateSchematicState, 1);
+    state->window = window;
     state->image = image;
     state->scrolled = scrolled;
     state->zoom = 1.0;
+    state->signal_path = g_strdup(signal_path);
     state->original_pixbuf = pixbuf; /* state now owns this reference */
     gate_apply_zoom(state);
 
@@ -617,6 +699,7 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     g_signal_connect(zoom_out_button, "clicked", G_CALLBACK(on_gate_zoom_out_clicked), state);
     g_signal_connect(zoom_fit_button, "clicked", G_CALLBACK(on_gate_zoom_fit_clicked), state);
     g_signal_connect(zoom_100_button, "clicked", G_CALLBACK(on_gate_zoom_100_clicked), state);
+    g_signal_connect(export_button, "clicked", G_CALLBACK(on_gate_export_clicked), state);
     g_signal_connect(scrolled, "size-allocate",
                      G_CALLBACK(on_gate_scrolled_size_allocate_fit_once), state);
 

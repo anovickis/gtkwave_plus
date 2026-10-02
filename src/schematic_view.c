@@ -1049,6 +1049,76 @@ static void on_zoom_100_clicked(GtkButton *button, gpointer user_data)
     set_zoom((SchematicState *)user_data, 1.0);
 }
 
+// A signal path can legally contain '/' (an escaped identifier, or a rare
+// alternate hierarchy delimiter), which a plain filename can't -- so this
+// only matters for building a *suggested* default filename, not anywhere
+// signal_path is used to query the design itself.
+static gchar *sanitize_filename_component(const gchar *s)
+{
+    GString *out = g_string_new(NULL);
+    for (const gchar *p = s; *p != '\0'; p++) {
+        g_string_append_c(out, (*p == '/' || *p == '\\') ? '_' : *p);
+    }
+    return g_string_free(out, FALSE);
+}
+
+// Saves the diagram at its original (1.0 zoom, SCHEMATIC_DPI) resolution,
+// independent of whatever zoom level is currently on screen -- a Print/
+// Capture action should capture the full-detail render, not whatever a
+// user happened to have zoomed/panned to.
+static void on_export_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    SchematicState *state = user_data;
+
+    if (state->original_pixbuf == NULL) {
+        status_text("GTKWAVE | Nothing to export yet.\n");
+        return;
+    }
+
+    GtkWindow *parent =
+        state->window != NULL && GTK_IS_WINDOW(state->window) ? GTK_WINDOW(state->window) : NULL;
+
+    GtkFileChooserNative *chooser = gtk_file_chooser_native_new(
+        "Export Schematic Image", parent, GTK_FILE_CHOOSER_ACTION_SAVE, "_Save", "_Cancel");
+    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
+
+    gchar *sanitized = sanitize_filename_component(state->signal_path);
+    gchar *suggested_name = g_strdup_printf("%s.png", sanitized);
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), suggested_name);
+    g_free(suggested_name);
+    g_free(sanitized);
+
+    GtkFileFilter *png_filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(png_filter, "PNG images (*.png)");
+    gtk_file_filter_add_pattern(png_filter, "*.png");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), png_filter);
+
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        gchar *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        gchar *final_path =
+            g_str_has_suffix(path, ".png") ? g_strdup(path) : g_strconcat(path, ".png", NULL);
+
+        GError *error = NULL;
+        if (!gdk_pixbuf_save(state->original_pixbuf, final_path, "png", &error, NULL)) {
+            gchar *msg = g_strdup_printf(
+                "GTKWAVE | Export failed: %s\n", error != NULL ? error->message : "unknown error");
+            status_text(msg);
+            g_free(msg);
+            g_clear_error(&error);
+        } else {
+            gchar *msg = g_strdup_printf("GTKWAVE | Exported schematic image to %s\n", final_path);
+            status_text(msg);
+            g_free(msg);
+        }
+
+        g_free(final_path);
+        g_free(path);
+    }
+
+    g_object_unref(chooser);
+}
+
 // One-shot: fires on the scrolled window's first real size-allocate (at
 // construction time it hasn't been realized yet, so fitting to it right
 // away would just measure a 0x0/default area), then disconnects itself
@@ -1134,6 +1204,14 @@ void netlist_query_show_schematic(const char *signal_path)
     GtkWidget *zoom_100_button = gtk_button_new_with_label("1:1");
     gtk_box_pack_start(GTK_BOX(toolbar), zoom_100_button, FALSE, FALSE, 0);
 
+    GtkWidget *export_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(toolbar), export_sep, FALSE, FALSE, 4);
+
+    GtkWidget *export_button = gtk_button_new_with_label("Export Image\xe2\x80\xa6");
+    gtk_widget_set_tooltip_text(export_button,
+                                "Save the diagram (at full resolution) to a PNG file");
+    gtk_box_pack_start(GTK_BOX(toolbar), export_button, FALSE, FALSE, 0);
+
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_box_pack_start(GTK_BOX(vbox), scrolled, TRUE, TRUE, 0);
 
@@ -1171,6 +1249,7 @@ void netlist_query_show_schematic(const char *signal_path)
     g_signal_connect(zoom_out_button, "clicked", G_CALLBACK(on_zoom_out_clicked), state);
     g_signal_connect(zoom_fit_button, "clicked", G_CALLBACK(on_zoom_fit_clicked), state);
     g_signal_connect(zoom_100_button, "clicked", G_CALLBACK(on_zoom_100_clicked), state);
+    g_signal_connect(export_button, "clicked", G_CALLBACK(on_export_clicked), state);
 
     g_object_set_data_full(G_OBJECT(window), "schematic-state", state, schematic_state_free);
 
