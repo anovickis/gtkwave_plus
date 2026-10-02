@@ -518,6 +518,20 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   `time_span_comments_get()` that the text changed, start/end were
   preserved, and the count stayed at 1 -- then confirmed the rebuilt
   list window's row label showed the new text.
+- **Added "Add to Waveform" to the RTL schematic view's context menu.**
+  Right-clicking a resolved node (Show Drivers/Show Loads) now also
+  offers Add to Waveform: resolves the full path via
+  `gw_dump_file_lookup_symbol()` (same lookup bus_ops.c/wcp_gtkwave.c
+  use) and adds it via `AddNodeTraceReturn()`, same as the WCP
+  `add_items` path. Gate-level (yosys) schematic view is out of scope
+  -- no click/hit-testing machinery exists there to hang a menu off of.
+  Verified live via gdb: a direct call with a resolvable VCD path added
+  the trace (confirmed name and count); opened the real schematic
+  view, drove the real right-click handler with a synthetic event at a
+  real node's coordinates, confirmed the real popup menu's items by
+  label (including the new "Add to Waveform" item), and activated it
+  via `gtk_menu_item_activate()`, confirming it invoked the handler
+  with the node's exact full path.
 
 ## Up next, in order
 
