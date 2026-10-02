@@ -532,6 +532,30 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   label (including the new "Add to Waveform" item), and activated it
   via `gtk_menu_item_activate()`, confirming it invoked the handler
   with the node's exact full path.
+- **Fixed schematic popups getting stuck at native size, never auto-
+  fitting.** User-reported: both schematic popups (RTL fan-in cone and
+  gate-level) could still render dark/unreadable with the diagram tiny
+  in a corner, no effective pan/zoom -- the same symptom the earlier
+  e0e95f3 zoom/centering fix was supposed to have already resolved.
+  Root cause: the one-shot "fit on first real size-allocate" handler in
+  both views disconnected itself unconditionally after a single call to
+  zoom_to_fit(), regardless of whether that call actually computed a
+  fit -- a toplevel's very first size-allocate can legitimately report
+  a placeholder size (e.g. 1x1) before the window manager finishes
+  negotiating its real geometry, and disconnecting on that miss left
+  the diagram stuck at native 1.0 zoom forever with no further retry.
+  Fixed by having zoom_to_fit()/gate_zoom_to_fit() return whether a fit
+  was actually applied, and only disconnecting the one-shot handler
+  when that's true. Verified via gdb: reconnected a fresh instance of
+  the handler, forced the scrolled window's allocation to a bogus 1x1
+  and emitted a real "size-allocate" signal (confirmed zoom unchanged),
+  restored its real allocation and emitted again (confirmed the same
+  handler was still connected and now correctly fit, zoom 1.0 -> 1.061),
+  then emitted a third time with yet another valid size (confirmed zoom
+  unchanged, proving it had by then correctly disconnected itself so a
+  later resize doesn't fight the user's own zoom choice). A window-
+  manager-less headless display made this hard to verify by eye --
+  this was confirmed at the logic level instead.
 
 ## Up next, in order
 
