@@ -636,6 +636,24 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   `return` from the breakpointed frame instead, without ever calling
   `finish`, is the safe pattern and is now the going-forward approach
   for this project rather than something to keep re-discovering).
+- **Fixed schematic nodes mislabeled as unresolved for Case/Const/
+  Variable.** Found opportunistically while building a more complex
+  multi-module test design (a 4-module toy CPU datapath -- sequencer +
+  register file + ALU, with a genuine feedback loop) to show off the
+  schematic view: `extract_leaf_name()`'s structural-node allowlist
+  checked for the literal string `"Constant"`, but slang-netlist's
+  `NetlistDot.hpp` always emits `"Const <value>"` (e.g. `"Const
+  8'd0"`) -- that comparison never matched anything in practice, so
+  every constant node fell through to the generic leaf-name extraction
+  and rendered as a dashed-border "unresolved net" instead of a
+  structural one. `"Case"` was missing from the allowlist entirely,
+  same symptom. Fixed both, plus added `"Variable "` prefix handling
+  (a real signal name worth resolving, confirmed from the same
+  upstream source, unlike the structural kinds). Verified via gdb
+  against a live instance rendering the new design's real schematic:
+  before the fix, `Case`/`Const 8'd0` nodes had `unresolved=1`; after,
+  `unresolved=0` for both, confirmed on the actual live `SchematicNodeInfo`
+  array, not just by eye.
 
 ## Up next, in order
 
