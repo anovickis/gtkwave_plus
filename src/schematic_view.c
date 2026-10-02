@@ -159,9 +159,20 @@ static gboolean zoom_to_fit(SchematicState *state)
 }
 
 // slang-netlist's DOT node labels are its own generic descriptions, e.g.
-// "In port clk", "Out port at_max [3:0]", "count_q [3:0]", "Assignment",
-// "Conditional". Recovers the bare signal leaf name from these, or NULL for
-// a structural node that carries no signal value of its own.
+// "In port clk", "Out port at_max [3:0]", "Variable tmp [3:0]",
+// "count_q [3:0]", "Assignment", "Conditional", "Case", "Merge",
+// "Const 8'd0" (see slang-netlist's NetlistDot.hpp, the canonical source
+// of these exact strings). Recovers the bare signal leaf name from these,
+// or NULL for a structural node that carries no signal value of its own.
+//
+// "Const " is a prefix match, not g_str_equal(s, "Constant") (what this
+// used to check) -- NetlistDot.hpp's Constant case always emits "Const
+// <value>" (e.g. "Const 8'd0"), never the bare word "Constant", so that
+// comparison never actually matched anything: a constant node always fell
+// through to the generic bracket-based extraction below and came out
+// looking like an unresolved net (dashed border) instead of a structural
+// one. Same bug, confirmed the same way, for "Case" (missing from this
+// list entirely).
 static gchar *extract_leaf_name(const gchar *label)
 {
     const gchar *s = label;
@@ -170,8 +181,11 @@ static gchar *extract_leaf_name(const gchar *label)
         s += strlen("In port ");
     } else if (g_str_has_prefix(s, "Out port ")) {
         s += strlen("Out port ");
+    } else if (g_str_has_prefix(s, "Variable ")) {
+        s += strlen("Variable ");
     } else if (g_str_equal(s, "Assignment") || g_str_equal(s, "Conditional") ||
-              g_str_equal(s, "Merge") || g_str_equal(s, "Constant")) {
+              g_str_equal(s, "Case") || g_str_equal(s, "Merge") ||
+              g_str_has_prefix(s, "Const ")) {
         return NULL;
     }
 
