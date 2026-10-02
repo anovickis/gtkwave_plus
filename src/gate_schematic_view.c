@@ -1133,6 +1133,54 @@ static void on_gate_zoom_100_clicked(GtkButton *button, gpointer user_data)
     gate_set_zoom((GateSchematicState *)user_data, 1.0);
 }
 
+// Standard image-viewer/IDE scroll-wheel convention: plain wheel scrolls
+// vertically (the GtkScrolledWindow's own default "scroll-event" class
+// handler already does this -- returning FALSE here for the plain case
+// lets that run unmodified), Shift+wheel scrolls horizontally instead
+// (there's no built-in GTK3 behavior for this), and Ctrl+wheel zooms.
+// Connected as a normal (non-"_after") handler so returning TRUE here
+// pre-empts the scrolled window's own default handling for the Shift/
+// Ctrl cases.
+static gboolean on_gate_scroll_event(GtkWidget *widget, GdkEventScroll *event, gpointer user_data)
+{
+    (void)widget;
+    GateSchematicState *state = user_data;
+
+    if (event->state & GDK_CONTROL_MASK) {
+        if (event->direction == GDK_SCROLL_UP) {
+            gate_set_zoom(state, state->zoom * 1.1);
+        } else if (event->direction == GDK_SCROLL_DOWN) {
+            gate_set_zoom(state, state->zoom / 1.1);
+        } else if (event->direction == GDK_SCROLL_SMOOTH) {
+            gdouble dx = 0, dy = 0;
+            if (gdk_event_get_scroll_deltas((GdkEvent *)event, &dx, &dy) && dy != 0) {
+                gate_set_zoom(state, dy < 0 ? state->zoom * 1.1 : state->zoom / 1.1);
+            }
+        }
+        return TRUE;
+    }
+
+    if (event->state & GDK_SHIFT_MASK) {
+        GtkAdjustment *hadj =
+            gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(state->scrolled));
+        gdouble step = gtk_adjustment_get_step_increment(hadj) * 3.0;
+
+        if (event->direction == GDK_SCROLL_UP) {
+            gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) - step);
+        } else if (event->direction == GDK_SCROLL_DOWN) {
+            gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) + step);
+        } else if (event->direction == GDK_SCROLL_SMOOTH) {
+            gdouble dx = 0, dy = 0;
+            if (gdk_event_get_scroll_deltas((GdkEvent *)event, &dx, &dy)) {
+                gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) + dy * step);
+            }
+        }
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 // See sanitize_filename_component() in schematic_view.c -- same reasoning,
 // duplicated rather than shared since these two views don't otherwise
 // share a header.
@@ -1508,6 +1556,8 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     g_signal_connect(zoom_fit_button, "clicked", G_CALLBACK(on_gate_zoom_fit_clicked), state);
     g_signal_connect(zoom_100_button, "clicked", G_CALLBACK(on_gate_zoom_100_clicked), state);
     g_signal_connect(export_button, "clicked", G_CALLBACK(on_gate_export_clicked), state);
+    gtk_widget_add_events(scrolled, GDK_SCROLL_MASK);
+    g_signal_connect(scrolled, "scroll-event", G_CALLBACK(on_gate_scroll_event), state);
     g_signal_connect(scrolled, "size-allocate",
                      G_CALLBACK(on_gate_scrolled_size_allocate_fit_once), state);
 
