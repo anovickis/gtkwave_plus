@@ -9,6 +9,8 @@
 #include "signal_value_lookup.h"
 #include "currenttime.h"
 #include "status.h"
+#include "signalwindow.h"
+#include "analyzer.h"
 
 // Pixel-space DPI used for both the displayed PNG and the coordinate math
 // below -- fixed explicitly (rather than relying on Graphviz's own
@@ -669,6 +671,27 @@ static void on_node_show_loads(GtkMenuItem *item, gpointer user_data)
     netlist_query_show_loads((const gchar *)user_data);
 }
 
+static void on_node_add_to_waveform(GtkMenuItem *item, gpointer user_data)
+{
+    (void)item;
+    const gchar *full_path = user_data;
+
+    if (GLOBALS->dump_file == NULL) {
+        status_text("GTKWAVE | No dump file loaded.\n");
+        return;
+    }
+
+    GwSymbol *sym = gw_dump_file_lookup_symbol(GLOBALS->dump_file, full_path);
+    if (sym == NULL || sym->n == NULL) {
+        status_text("GTKWAVE | Could not resolve that signal path.\n");
+        return;
+    }
+
+    AddNodeTraceReturn(sym->n, NULL, NULL);
+    redraw_signals_and_waves();
+    status_text("GTKWAVE | Added to waveform.\n");
+}
+
 static void show_node_context_menu(SchematicNodeInfo *node, GdkEventButton *event)
 {
     GtkWidget *menu = gtk_menu_new();
@@ -695,6 +718,15 @@ static void show_node_context_menu(SchematicNodeInfo *node, GdkEventButton *even
                           (GClosureNotify)(GDestroyNotify)g_free,
                           (GConnectFlags)0);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), loads_item);
+
+    GtkWidget *add_item = gtk_menu_item_new_with_label("Add to Waveform");
+    g_signal_connect_data(add_item,
+                          "activate",
+                          G_CALLBACK(on_node_add_to_waveform),
+                          g_strdup(node->full_path),
+                          (GClosureNotify)(GDestroyNotify)g_free,
+                          (GConnectFlags)0);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), add_item);
 
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
