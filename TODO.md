@@ -654,6 +654,68 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   before the fix, `Case`/`Const 8'd0` nodes had `unresolved=1`; after,
   `unresolved=0` for both, confirmed on the actual live `SchematicNodeInfo`
   array, not just by eye.
+- **Gate-level schematic: real traditional gate symbols, orthogonal
+  routing, click-to-source, scroll-wheel conventions.** User feedback on
+  the gate-level view (`gate_schematic_view.c`): Yosys's own `show`
+  command rendered generic IEEE-style record boxes via Graphviz, not a
+  real schematic (wires/gates/muxes/flops). Rebuilt the renderer around
+  **netlistsvg** (https://github.com/nturley/netlistsvg, MIT, Node.js +
+  `npm install -g netlistsvg`, auto-detected via `g_find_program_in_path`
+  with a graceful fallback to an improved dot/Graphviz path when it's
+  absent -- see below): real D-shaped AND, shield-shaped OR/XOR, and
+  triangle+bubble inverter symbols via its bundled skin, plus automatic
+  all-orthogonal, crossing-minimized routing via its ELK.js layout
+  engine (no hand-tuned Graphviz splines needed for this path).
+  Click-to-source: SVG cell groups carry an explicit pixel-space
+  `transform="translate(x,y)"` + `s:width`/`s:height` + `id="cell_<id>"`,
+  cross-referenced against the same cell's `attributes.src` in the Yosys
+  JSON netlist (via `json-glib`) to jump the source cross-probe panel to
+  that element's line -- new hit-testing parser, same
+  `GateNodeInfo`/`find_gate_node_at()` struct/lookup the dot-fallback
+  path also populates.
+  Fallback path (no netlistsvg installed): kept the original
+  Yosys-`show`-via-Graphviz pipeline, switched from SVG+rsvg-convert to
+  a direct `dot -Tpng` render (exact DPI match with `-Tplain` hit-testing
+  coordinates, confirmed empirically -- the old SVG/rsvg-convert
+  pipeline had a small but real DPI mismatch) and added
+  `inject_ortho_splines()` (`splines="ortho"` + wider node/rank spacing)
+  since Yosys's own dot writer already unconditionally emits
+  `rankdir="LR"`/`remincross=true` but never sets `splines`.
+  **Ports as connectors**: the netlistsvg path's first version pruned
+  the fan-in cone via `select ... %ci* %n; delete` (invert + delete
+  everything outside the cone), which left every cut wire boundary
+  dangling with no port identity -- netlistsvg drew nothing distinctive
+  for them. Fixed by switching to Yosys's `submod -name <name>` (carves
+  the selection out into a real new module, auto-creating a properly
+  directioned, properly NAMED port at every cut wire), confirmed
+  empirically to give every boundary cut a real `inputExt`/`outputExt`
+  connector arrow symbol. (`submod` requires memories already lowered --
+  `-no-mem` isn't a thing, so `memory;` was added ahead of `techmap`,
+  which the dot fallback path doesn't need since plain `show` has no
+  such restriction.)
+  **Scroll-wheel conventions** (both schematic views, for consistency):
+  plain wheel scrolls vertically (GTK's own default, untouched),
+  Shift+wheel scrolls horizontally (no GTK3 default for this), Ctrl+wheel
+  zooms -- a `scroll-event` handler connected normally (not `_after`) on
+  the `GtkScrolledWindow` so returning `TRUE` for the Shift/Ctrl cases
+  pre-empts the widget's own default handling, `FALSE` for the plain
+  case lets it run unmodified.
+  Verified via gdb against a live instance (including over the user's
+  real X11-forwarded display, not just headless): confirmed the
+  `submod`-based JSON netlist's `nodes with href` count and a direct
+  `GateNodeInfo` pixel-coordinate spot-check against a saved PNG crop
+  landed exactly on the expected `u_alu.result` port-arrow symbol;
+  confirmed the real `on_gate_image_button_press()` handler hit-tests
+  and returns `TRUE` for a constructed click at a known cell's
+  coordinates without crashing or hanging.
+  Known gaps, explicitly not done: selecting/cross-probing an individual
+  **wire** (netlistsvg's SVG doesn't give connecting-line paths their
+  own net identity, only gate/port boxes do -- would need patching
+  netlistsvg itself or a different renderer); the incremental
+  filter/expand/dissolve "Cone Window" interaction model (see the
+  scoped plan below -- this round's `submod`/one-hop-selection findings
+  are its foundation, but the click-to-expand/dissolve UI itself isn't
+  built yet).
 
 ## Up next, in order
 
@@ -669,19 +731,88 @@ the conversation history for the full reasoning behind this ordering.
    from anything else on this list -- pick up when there's a specific
    need.
 
-3. **Editable schematic mode** (reposition instances, collapse/expand a
-   module to a black box). What's left of the original bundle -- these
-   two need a real editable-layout data model (Graphviz's auto-layout
-   doesn't have a notion of a user-repositioned node, and collapsing a
-   module to a black box needs slang-netlist-side module-boundary
-   awareness the current fan-in-cone query doesn't have), so this is
-   real standalone work, not a quick pickup. (Configurable color
-   themes, navigation-only "last view" undo, print/capture (Export
-   Image), and drag-to-wave-pane, all originally bundled here, are now
-   done -- see above. Zoom/pan was already done before this list
-   existed.)
+3. **Gate-level schematic "Cone Window"** (incremental filter/expand/
+   dissolve, matching how Verdi's nSchema and Concept Engineering's own
+   StarVision -- a past gtkwave contributor, per `bus_ops.c`'s copyright
+   line -- both work: start from one small element, grow the diagram
+   one hop at a time on request, keep sub-modules as black boxes until
+   explicitly asked to dissolve). Scoped and empirically validated this
+   session (both load-bearing mechanisms confirmed working against the
+   real toy-CPU test design, not just read about):
+   - **"Start small"**: seed the diagram from a single-hop selection
+     (Yosys `select <signal> %ci`, immediate drivers only) instead of
+     today's full transitive `%ci*` cone. Confirmed: a 1-hop selection
+     around `alu_result` produced a 3-cell, 356x184px diagram (just the
+     `alu` instance, kept as one black box, with clean named ports) --
+     vs. today's always-render-everything ~450-cell, 5399x16100px cone.
+   - **"Expand"**: clicking a boundary port connector (an `inputExt`/
+     `outputExt` symbol, i.e. a cut wire) should pull in whatever's
+     immediately upstream/downstream of that specific net and re-render.
+     Mechanism: re-run Yosys with the growing set of previously-included
+     object names unioned with a fresh one-hop `%ci`/`%co` query seeded
+     from the clicked port's net name, then re-`submod`/re-render.
+     Yosys has no interactive/incremental session mode, so this means a
+     fresh Yosys invocation per expand-click (re-synthesizing from
+     source each time) rather than incrementally mutating a live
+     process -- confirmed fast enough for a modest design in this
+     session's own ad hoc testing (well under a second), but not
+     stress-tested against a large real design yet.
+   - **"Dissolve"**: a sub-module instance (any Yosys cell whose type is
+     a user module, not a `$_AND_`-style primitive) starts as a single
+     black box -- confirmed: selecting a non-flattened module instance
+     and `submod`-extracting it still renders as one labeled box via
+     netlistsvg's generic-cell fallback shape, not its internal gates.
+     Clicking it should add its instance path to a persisted
+     "dissolved" set and re-run with `flatten <that instance's
+     selection>` (confirmed `flatten` accepts a selection argument, not
+     just whole-design) instead of today's unconditional global
+     `flatten;`, then re-render -- which will itself introduce new
+     boundary ports around what used to be the instance's black-box
+     edge, ready for further expand/dissolve.
+   - **New persistent per-window state** (`GateSchematicState`):
+     `included_objects` (explicit Yosys object names pulled in so far,
+     seeded with just the root signal) and `dissolved_instances`
+     (instance paths to flatten, starts empty); a single rebuild
+     function re-derives the whole Yosys script from both sets on every
+     interaction.
+   - **Filter**: a visible way to prune the current diagram back down
+     (remove an included object, re-render) -- the inverse of expand;
+     not yet designed in detail, lowest priority of the three verbs.
+   - Click semantics become three-way depending on what's clicked: a
+     boundary port connector -> expand; an undissolved black-box
+     instance -> dissolve; an already-dissolved primitive gate -> the
+     existing click-to-source behavior, unchanged.
+   - Known related gap, NOT solved by this plan: selecting/cross-probing
+     an individual **wire** (as opposed to a gate/port box) still isn't
+     possible -- netlistsvg's SVG gives no net identity to the
+     connecting lines themselves, only to the boxes at either end. Would
+     need patching netlistsvg or a different renderer; out of scope
+     here.
+   - A parallel, much smaller opportunity for the RTL (slang-netlist)
+     schematic view: `GwNetlistQueryLimits.max_depth` already exists
+     (shipped earlier this project for the Show Drivers/Loads results
+     windows) but isn't wired into `schematic_view.c`'s own cone
+     rendering, which always queries unlimited depth. Passing a shallow
+     depth + a similar "double-click an edge node to re-query one level
+     deeper" interaction would give a cheaper, smaller-lift version of
+     the same "start small, expand" idea for the RTL view specifically,
+     reusing existing infrastructure instead of Yosys selection algebra.
+     Worth doing as a standalone smaller item, independent of the gate-
+     view work above.
 
-4. **Auto Update** (live-tail a still-running simulation). A genuinely
+4. **RTL schematic layout editing** (reposition instances by hand,
+   print/capture an edited layout). What's left of the original
+   "Editable schematic mode" bundle that the Cone Window plan above
+   doesn't cover -- needs a real editable-layout data model, since
+   Graphviz's auto-layout has no notion of a user-repositioned node.
+   Real standalone work, not a quick pickup. (Configurable color themes,
+   navigation-only "last view" undo, print/capture (Export Image), and
+   drag-to-wave-pane, all originally bundled in this item, are now done
+   -- see above. Zoom/pan was already done before this list existed.
+   Collapse/expand a module to a black box, also originally bundled
+   here, is now covered by item 3's dissolve mechanism instead.)
+
+5. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
     real nWave feature. Investigated this session: no existing "re-scan
     the currently-open dump file for appended data" capability at all
@@ -700,11 +831,11 @@ the conversation history for the full reasoning behind this ordering.
     Medium-to-large, not a bounded single-session task; deferred rather
     than rushed, same reasoning as Waveform Compare.
 
-5. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
+6. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-6. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
+7. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
     scale feature for struct-heavy designs. Investigated this session:
     SystemVerilog struct/union signals aren't a distinct `GwVarType`
     today -- they're flattened into ordinary wide-bitvector nodes and
@@ -724,7 +855,7 @@ the conversation history for the full reasoning behind this ordering.
     purely-cosmetic threshold tweak was considered and rejected since it
     wouldn't deliver the performance win the item actually asks for.
 
-7. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+8. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
