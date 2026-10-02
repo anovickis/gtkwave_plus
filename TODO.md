@@ -586,6 +586,26 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   color) via a standalone compiled unit test of the copied logic, since
   the real function is `static` inside a translation unit that pulls in
   the whole app.
+- **Export Image for both schematic views (print/capture).** A new
+  "Export Image..." toolbar button on the RTL and gate-level schematic
+  windows saves the diagram to a PNG file via a native save dialog
+  (`GtkFileChooserNative`, same pattern as the HDL-source-file picker in
+  `netlist_query_ui.c`), with a suggested filename derived from the
+  signal path. Always saves the original full-resolution render, not
+  whatever zoom/pan is currently on screen. Verified via gdb against a
+  live instance: confirmed the suggested filename matched the signal
+  path exactly (`top.max_reached_reg.png`); forced the dialog's
+  `gtk_native_dialog_run()` to return Cancel (breakpoint + forced
+  return, same technique as the Time-Span Comments Edit dialog
+  verification) and confirmed the function exits cleanly with no file
+  written; separately called the exact same `gdk_pixbuf_save()` used by
+  the Accept branch directly on the live `original_pixbuf` and confirmed
+  a valid full-resolution PNG was written to disk. Did not force the
+  Accept branch itself through the dialog (headless Xvfb has no window
+  manager, and an earlier attempt at driving a different nested-call
+  loop in this same session wedged a gdb/gtkwave pair badly enough to
+  need a hard kill -- not worth the risk for boilerplate that's a
+  verbatim copy of the already-shipped `choose_source_files()` pattern).
 
 ## Up next, in order
 
@@ -601,13 +621,15 @@ the conversation history for the full reasoning behind this ordering.
    from anything else on this list -- pick up when there's a specific
    need.
 
-3. **Editable/exportable schematic mode** (reposition instances,
-   print/capture, collapse/expand a module to a black box, drag a
-   schematic signal into the wave pane). Polish tier -- do
-   opportunistically alongside other schematic work rather than as a
-   standalone effort. (Configurable color themes and navigation-only
-   "last view" undo, also originally bundled here, are now done -- see
-   above. Zoom/pan was already done before this list existed.)
+3. **Editable schematic mode** (reposition instances, collapse/expand a
+   module to a black box, drag a schematic signal into the wave pane --
+   this last one is partly covered already by the right-click "Add to
+   Waveform" item on the RTL view). Polish tier -- do opportunistically
+   alongside other schematic work rather than as a standalone effort.
+   (Configurable color themes, navigation-only "last view" undo, and
+   print/capture (Export Image), all originally bundled here, are now
+   done -- see above. Zoom/pan was already done before this list
+   existed.)
 
 4. **Auto Update** (live-tail a still-running simulation). A genuinely
     different workflow (active-sim debugging vs. post-hoc analysis),
