@@ -49,10 +49,14 @@ static void schematic_node_info_free(gpointer data)
 
 typedef struct
 {
+    GtkWidget *window;
     GtkWidget *image;
     GtkWidget *scrolled; /* for measuring available viewport size on "Zoom to Fit" */
+    GtkWidget *back_button;
     gulong marker_handler_id;
     gchar *signal_path;
+    GPtrArray *history; /* gchar*, signal paths navigated away from via
+                         double-click, most-recent-last; "Back" pops this */
     GPtrArray *nodes; /* SchematicNodeInfo*, current layout; rebuilt on refresh */
     GdkPixbuf *original_pixbuf; /* most recent render at 1.0 zoom (SCHEMATIC_DPI); the
                                  displayed image is this, rescaled by `zoom` */
@@ -73,6 +77,9 @@ static void schematic_state_free(gpointer data)
     }
     if (state->original_pixbuf != NULL) {
         g_object_unref(state->original_pixbuf);
+    }
+    if (state->history != NULL) {
+        g_ptr_array_unref(state->history);
     }
     g_free(state->signal_path);
     g_free(state);
@@ -739,6 +746,8 @@ static void show_node_context_menu(SchematicNodeInfo *node, GdkEventButton *even
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
 }
 
+static void schematic_navigate_to(SchematicState *state, const gchar *new_path);
+
 static gboolean
 on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
@@ -770,7 +779,7 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
 
     if (event->button == 1 && event->type == GDK_2BUTTON_PRESS) {
         if (node->full_path != NULL) {
-            netlist_query_show_schematic(node->full_path);
+            schematic_navigate_to(state, node->full_path);
         } else if (node->unresolved) {
             status_text(
                 "GTKWAVE | Double-clicked an unresolved net -- no full path to expand "
@@ -919,6 +928,62 @@ static void on_marker_changed(GwProject *project, gpointer user_data)
     refresh_schematic((SchematicState *)user_data);
 }
 
+static void update_schematic_title(SchematicState *state)
+{
+    if (state->window == NULL) {
+        return;
+    }
+    gchar *title = g_strdup_printf("Schematic: %s", state->signal_path);
+    gtk_window_set_title(GTK_WINDOW(state->window), title);
+    g_free(title);
+}
+
+static void update_back_button_sensitivity(SchematicState *state)
+{
+    if (state->back_button != NULL) {
+        gtk_widget_set_sensitive(state->back_button,
+                                 state->history != NULL && state->history->len > 0);
+    }
+}
+
+// Re-points this same window at a different signal's fan-in cone --
+// double-clicking a node navigates in place (rather than spawning another
+// top-level window per hop, which would otherwise litter the desktop after
+// a few hops down a cone) -- pushing the signal navigated away from onto
+// `history`, so "Back" can return to it.
+static void schematic_navigate_to(SchematicState *state, const gchar *new_path)
+{
+    if (state->history == NULL) {
+        state->history = g_ptr_array_new_with_free_func(g_free);
+    }
+    g_ptr_array_add(state->history, state->signal_path); /* transfers ownership */
+    state->signal_path = g_strdup(new_path);
+
+    update_schematic_title(state);
+    update_back_button_sensitivity(state);
+    refresh_schematic(state);
+}
+
+static void on_back_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    SchematicState *state = user_data;
+
+    if (state->history == NULL || state->history->len == 0) {
+        return;
+    }
+
+    guint last = state->history->len - 1;
+    gchar *prev_path = g_ptr_array_steal_index(state->history, last);
+
+    g_free(state->signal_path);
+    state->signal_path = prev_path; /* adopts the g_strdup'd copy history was holding */
+
+    update_schematic_title(state);
+    update_back_button_sensitivity(state);
+    refresh_schematic(state);
+}
+
 // Steps the annotated time to the root signal's next/previous real
 // transition, without leaving the schematic window: moves the primary
 // marker there (which on_marker_changed() above already re-renders on),
@@ -1022,6 +1087,15 @@ void netlist_query_show_schematic(const char *signal_path)
     gtk_container_set_border_width(GTK_CONTAINER(toolbar), 4);
     gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
 
+    GtkWidget *back_button = gtk_button_new_with_label("\xe2\x97\x80 Back");
+    gtk_widget_set_tooltip_text(
+        back_button, "Return to the signal shown before the last double-click navigation");
+    gtk_widget_set_sensitive(back_button, FALSE);
+    gtk_box_pack_start(GTK_BOX(toolbar), back_button, FALSE, FALSE, 0);
+
+    GtkWidget *back_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(toolbar), back_sep, FALSE, FALSE, 4);
+
     GtkWidget *prev_button = gtk_button_new_with_label("\xe2\x97\x80 Prev Transition");
     gtk_widget_set_tooltip_text(
         prev_button, "Move the marker to this signal's previous transition, without leaving the "
@@ -1071,14 +1145,17 @@ void netlist_query_show_schematic(const char *signal_path)
     gtk_container_add(GTK_CONTAINER(event_box), image);
 
     SchematicState *state = g_new0(SchematicState, 1);
+    state->window = window;
     state->image = image;
     state->scrolled = scrolled;
+    state->back_button = back_button;
     state->zoom = 1.0;
     state->signal_path = g_strdup(signal_path);
     state->marker_handler_id =
         g_signal_connect(GLOBALS->project, "unnamed-marker-changed",
                          G_CALLBACK(on_marker_changed), state);
 
+    g_signal_connect(back_button, "clicked", G_CALLBACK(on_back_clicked), state);
     g_signal_connect(prev_button, "clicked", G_CALLBACK(on_prev_transition_clicked), state);
     g_signal_connect(next_button, "clicked", G_CALLBACK(on_next_transition_clicked), state);
     g_signal_connect(zoom_in_button, "clicked", G_CALLBACK(on_zoom_in_clicked), state);
