@@ -35,6 +35,11 @@ typedef struct
                           has no leaf name at all. Rendered with a dashed
                           border (see annotate_dot()) so an incomplete net
                           is visually distinguishable from a normal one. */
+    gboolean depth_truncated; /* TRUE if this node sits at the edge of the
+                               current depth limit (state->max_depth) and
+                               has further, not-yet-shown upstream fan-in --
+                               double-clicking it expands the limit instead
+                               of navigating (see bfs_keep_within_depth()). */
     gdouble x, y; /* pixel-space top-left corner */
     gdouble w, h; /* pixel-space size */
 } SchematicNodeInfo;
@@ -54,8 +59,18 @@ typedef struct
     GtkWidget *image;
     GtkWidget *scrolled; /* for measuring available viewport size on "Zoom to Fit" */
     GtkWidget *back_button;
+    GtkWidget *depth_spin;
     gulong marker_handler_id;
     gchar *signal_path;
+    guint max_depth; /* 0 = unlimited (today's long-standing behavior);
+                      otherwise the fan-in cone is pruned client-side to
+                      this many reverse-edge hops from signal_path before
+                      rendering -- see bfs_keep_within_depth(). Defaults
+                      to a small nonzero value for a newly-opened window
+                      (see netlist_query_show_schematic()), matching
+                      Verdi/StarVision's "start small, expand on request"
+                      Cone Window model rather than always rendering the
+                      whole cone at once. */
     GPtrArray *history; /* gchar*, signal paths navigated away from via
                          double-click, most-recent-last; "Back" pops this */
     GPtrArray *nodes; /* SchematicNodeInfo*, current layout; rebuilt on refresh */
@@ -96,6 +111,12 @@ static void schematic_state_free(gpointer data)
 
 #define SCHEMATIC_ZOOM_MIN 0.1
 #define SCHEMATIC_ZOOM_MAX 8.0
+
+// Default depth limit for a newly-opened schematic window -- small on
+// purpose (Verdi/StarVision Cone Window "start small" model), rather
+// than this view's old always-render-the-whole-cone behavior. 0 (chosen
+// via the toolbar spinner) still means unlimited.
+#define SCHEMATIC_DEFAULT_MAX_DEPTH 3
 
 // Rescales state->original_pixbuf by state->zoom and sets it on the
 // GtkImage -- the single place both "a new render just came in" and "the
@@ -639,9 +660,11 @@ static gboolean run_dot_to_png(const gchar *dot_text, gchar **out_png_path, GErr
 // id_to_label + leaf_to_path along the way. See
 // https://graphviz.org/docs/outputs/plain/ for the format -- coordinates
 // are in inches, Y-up from the bottom-left, and need flipping to match
-// gdk-pixbuf's top-left-origin pixel space.
-static GPtrArray *
-parse_plain_nodes(const gchar *plain_text, GHashTable *id_to_label, GHashTable *leaf_to_path)
+// gdk-pixbuf's top-left-origin pixel space. `boundary_ids` (optional, may
+// be NULL) marks which node ids are depth-limit boundary nodes -- see
+// bfs_keep_within_depth().
+static GPtrArray *parse_plain_nodes(const gchar *plain_text, GHashTable *id_to_label,
+                                   GHashTable *leaf_to_path, GHashTable *boundary_ids)
 {
     GPtrArray *nodes = g_ptr_array_new_with_free_func(schematic_node_info_free);
     gdouble graph_h_in = 0.0;
@@ -681,6 +704,10 @@ parse_plain_nodes(const gchar *plain_text, GHashTable *id_to_label, GHashTable *
                     info->unresolved = TRUE;
                 }
                 g_free(leaf);
+            }
+
+            if (boundary_ids != NULL && g_hash_table_contains(boundary_ids, name)) {
+                info->depth_truncated = TRUE;
             }
 
             g_ptr_array_add(nodes, info);
@@ -779,6 +806,9 @@ static void show_node_context_menu(SchematicNodeInfo *node, GdkEventButton *even
 }
 
 static void schematic_navigate_to(SchematicState *state, const gchar *new_path);
+static void schematic_expand_depth(SchematicState *state);
+static void set_max_depth(SchematicState *state, guint new_depth);
+static void on_depth_spin_changed(GtkSpinButton *widget, gpointer user_data);
 
 static gboolean
 on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
@@ -815,7 +845,9 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
         // wiggle of the mouse can't turn this into an unwanted drag.
         state->drag_pending = FALSE;
 
-        if (node->full_path != NULL) {
+        if (node->depth_truncated) {
+            schematic_expand_depth(state);
+        } else if (node->full_path != NULL) {
             schematic_navigate_to(state, node->full_path);
         } else if (node->unresolved) {
             status_text(
@@ -831,12 +863,14 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
 
     if (event->button == 1 && event->type == GDK_BUTTON_PRESS) {
         gchar *msg;
+        const gchar *more_hint =
+            node->depth_truncated ? " -- double-click to show more upstream" : "";
         if (node->full_path != NULL) {
-            msg = g_strdup_printf("GTKWAVE | %s (%s)\n", node->full_path, node->label);
+            msg = g_strdup_printf("GTKWAVE | %s (%s)%s\n", node->full_path, node->label, more_hint);
         } else if (node->unresolved) {
-            msg = g_strdup_printf("GTKWAVE | %s (unresolved net)\n", node->label);
+            msg = g_strdup_printf("GTKWAVE | %s (unresolved net)%s\n", node->label, more_hint);
         } else {
-            msg = g_strdup_printf("GTKWAVE | %s\n", node->label);
+            msg = g_strdup_printf("GTKWAVE | %s%s\n", node->label, more_hint);
         }
         status_text(msg);
         g_free(msg);
@@ -939,6 +973,231 @@ static void on_image_drag_data_get(GtkWidget *widget, GdkDragContext *dc,
     }
 }
 
+// --- Depth-limited "Cone Window" rendering (start small, expand on
+// request -- matching Verdi's nSchema and Concept Engineering's own
+// StarVision, see TODO.md) --------------------------------------------
+//
+// slang-netlist's own --fan-in/--netlist-dot combo has no depth control
+// at all: it always returns the FULL transitive cone (see
+// gw_netlist_query_get_cone_dot()). GwNetlistQueryLimits (used by the
+// Show Drivers/Loads results windows) doesn't help here either -- it
+// filters a flat GwNetlistEdge list by *hierarchical path* divergence
+// from signal_path, which only works because every edge there has a
+// resolvable path; a cone's DOT graph is mostly unnamed structural nodes
+// (Assignment/Conditional/...) with no path to compare at all, so that
+// notion of "depth" can't prune them. What's needed instead is plain
+// graph-hop distance along the DOT graph's own edges, independent of
+// GwNetlistQueryLimits entirely.
+
+// Finds the Graphviz node id whose resolved signal path matches
+// `signal_path` exactly -- the root of this fan-in cone and the BFS seed
+// below. NULL if not found (shouldn't normally happen: the cone's own
+// query root is always a named signal, not a structural node).
+static gchar *find_root_node_id(GHashTable *id_to_label, GHashTable *leaf_to_path,
+                                const gchar *signal_path)
+{
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, id_to_label);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        const gchar *id = key;
+        const gchar *label = value;
+        gchar *leaf = extract_leaf_name(label);
+        if (leaf == NULL) {
+            continue;
+        }
+        const gchar *path = g_hash_table_lookup(leaf_to_path, leaf);
+        gboolean match = path != NULL && g_str_equal(path, signal_path);
+        g_free(leaf);
+        if (match) {
+            return g_strdup(id);
+        }
+    }
+    return NULL;
+}
+
+// {target node id -> GPtrArray of borrowed source node id strings}: for
+// each `Na -> Nb` edge line in `dot_text`, records that Nb's fan-in
+// includes Na. The BFS below walks this backward from the cone's root to
+// find what feeds into it, one hop at a time.
+static GHashTable *extract_reverse_adjacency(const gchar *dot_text)
+{
+    GHashTable *rev =
+        g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_ptr_array_unref);
+    GRegex *re = g_regex_new("^\\s*(N\\d+)\\s*->\\s*(N\\d+)", 0, 0, NULL);
+    gchar **lines = g_strsplit(dot_text, "\n", -1);
+
+    for (guint i = 0; lines[i] != NULL; i++) {
+        GMatchInfo *match_info = NULL;
+        if (g_regex_match(re, lines[i], 0, &match_info)) {
+            gchar *src = g_match_info_fetch(match_info, 1);
+            gchar *dst = g_match_info_fetch(match_info, 2);
+
+            GPtrArray *srcs = g_hash_table_lookup(rev, dst);
+            if (srcs == NULL) {
+                srcs = g_ptr_array_new_with_free_func(g_free);
+                g_hash_table_insert(rev, g_strdup(dst), srcs);
+            }
+            g_ptr_array_add(srcs, src); /* adopts the fetch() allocation */
+            g_free(dst);
+        }
+        g_match_info_free(match_info);
+    }
+
+    g_strfreev(lines);
+    g_regex_unref(re);
+    return rev;
+}
+
+// Reverse-BFS from `root_id` along `rev_adjacency`, up to `max_depth`
+// hops (root itself is depth 0). Returns the set of node ids to keep (a
+// GHashTable used as a set -- only key membership matters). `out_boundary`
+// (optional) is filled with every KEPT node that has further, un-visited
+// upstream neighbors purely because `max_depth` was reached there -- the
+// ones worth marking "more available, double-click to expand" rather
+// than silently cutting off with no visible trace.
+static GHashTable *bfs_keep_within_depth(GHashTable *rev_adjacency, const gchar *root_id,
+                                        guint max_depth, GHashTable *out_boundary)
+{
+    GHashTable *depth_of = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    GQueue *queue = g_queue_new();
+
+    gchar *root_copy = g_strdup(root_id);
+    g_hash_table_insert(depth_of, root_copy, GUINT_TO_POINTER(0));
+    g_queue_push_tail(queue, root_copy);
+
+    while (!g_queue_is_empty(queue)) {
+        const gchar *cur = g_queue_pop_head(queue);
+        guint cur_depth = GPOINTER_TO_UINT(g_hash_table_lookup(depth_of, cur));
+
+        GPtrArray *srcs = g_hash_table_lookup(rev_adjacency, cur);
+        if (srcs == NULL || srcs->len == 0) {
+            continue;
+        }
+
+        if (cur_depth >= max_depth) {
+            if (out_boundary != NULL) {
+                g_hash_table_add(out_boundary, g_strdup(cur));
+            }
+            continue;
+        }
+
+        for (guint i = 0; i < srcs->len; i++) {
+            const gchar *src = g_ptr_array_index(srcs, i);
+            if (g_hash_table_contains(depth_of, src)) {
+                continue;
+            }
+            gchar *src_copy = g_strdup(src);
+            g_hash_table_insert(depth_of, src_copy, GUINT_TO_POINTER(cur_depth + 1));
+            g_queue_push_tail(queue, src_copy);
+        }
+    }
+
+    g_queue_free(queue);
+    return depth_of; /* keys are the kept node ids */
+}
+
+// Rewrites `dot_text` to keep only node-definition lines for ids in
+// `keep` and edge lines where both endpoints are in `keep` -- everything
+// else (graph attributes, etc.) passes through unchanged. Mirrors
+// annotate_dot()'s per-line regex approach.
+static gchar *prune_dot_to_keep_set(const gchar *dot_text, GHashTable *keep)
+{
+    GRegex *node_re = g_regex_new("^\\s*(N\\d+)\\s*\\[", 0, 0, NULL);
+    GRegex *edge_re = g_regex_new("^\\s*(N\\d+)\\s*->\\s*(N\\d+)", 0, 0, NULL);
+    gchar **lines = g_strsplit(dot_text, "\n", -1);
+    GString *out = g_string_new(NULL);
+    gboolean first = TRUE;
+
+    for (guint i = 0; lines[i] != NULL; i++) {
+        gboolean keep_line = TRUE;
+        GMatchInfo *match_info = NULL;
+
+        if (g_regex_match(node_re, lines[i], 0, &match_info)) {
+            gchar *id = g_match_info_fetch(match_info, 1);
+            keep_line = g_hash_table_contains(keep, id);
+            g_free(id);
+        }
+        g_match_info_free(match_info);
+        match_info = NULL;
+
+        if (keep_line && g_regex_match(edge_re, lines[i], 0, &match_info)) {
+            gchar *src = g_match_info_fetch(match_info, 1);
+            gchar *dst = g_match_info_fetch(match_info, 2);
+            keep_line = g_hash_table_contains(keep, src) && g_hash_table_contains(keep, dst);
+            g_free(src);
+            g_free(dst);
+        }
+        g_match_info_free(match_info);
+
+        if (keep_line) {
+            if (!first) {
+                g_string_append_c(out, '\n');
+            }
+            g_string_append(out, lines[i]);
+            first = FALSE;
+        }
+    }
+
+    g_strfreev(lines);
+    g_regex_unref(node_re);
+    g_regex_unref(edge_re);
+    return g_string_free(out, FALSE);
+}
+
+// Appends a visible "more upstream, double-click to expand" marker to
+// the label of every node in `boundary_ids` (see bfs_keep_within_depth())
+// -- same per-line label-rewriting regex annotate_dot() itself uses, run
+// as its own separate pass before annotate_dot() so the two don't need
+// to know about each other.
+static gchar *mark_boundary_labels(const gchar *dot_text, GHashTable *boundary_ids)
+{
+    GRegex *label_re =
+        g_regex_new("^(\\s*N\\d+)(\\s*\\[label=\")([^\"]*)(\"\\]\\s*)$", 0, 0, NULL);
+    gchar **lines = g_strsplit(dot_text, "\n", -1);
+    GString *out = g_string_new(NULL);
+
+    for (guint i = 0; lines[i] != NULL; i++) {
+        if (i > 0) {
+            g_string_append_c(out, '\n');
+        }
+
+        GMatchInfo *match_info = NULL;
+        gboolean matched = g_regex_match(label_re, lines[i], 0, &match_info);
+        gboolean handled = FALSE;
+
+        if (matched) {
+            gchar *id_raw = g_match_info_fetch(match_info, 1);
+            gchar *id = g_strstrip(g_strdup(id_raw));
+
+            if (g_hash_table_contains(boundary_ids, id)) {
+                gchar *prefix = g_match_info_fetch(match_info, 2);
+                gchar *label = g_match_info_fetch(match_info, 3);
+                gchar *suffix = g_match_info_fetch(match_info, 4);
+                g_string_append_printf(
+                    out, "%s%s%s\\n(double-click: more)%s", id_raw, prefix, label, suffix);
+                g_free(prefix);
+                g_free(label);
+                g_free(suffix);
+                handled = TRUE;
+            }
+
+            g_free(id_raw);
+            g_free(id);
+        }
+
+        if (!handled) {
+            g_string_append(out, lines[i]);
+        }
+
+        g_match_info_free(match_info);
+    }
+
+    g_strfreev(lines);
+    g_regex_unref(label_re);
+    return g_string_free(out, FALSE);
+}
+
 static void refresh_schematic(SchematicState *state)
 {
     GError *error = NULL;
@@ -982,6 +1241,34 @@ static void refresh_schematic(SchematicState *state)
 
     GHashTable *id_to_label = extract_node_labels(dot);
 
+    // Depth-limited "Cone Window" rendering: prune the cone down to
+    // state->max_depth reverse-edge hops from the root before any of the
+    // (currently-unbounded) annotation/rendering work below runs. 0 means
+    // unlimited (today's long-standing full-cone behavior) -- skipped
+    // entirely in that case, and also silently skipped (full cone shown)
+    // if the root node can't be identified for some reason, rather than
+    // showing nothing.
+    GHashTable *boundary_ids = NULL;
+    if (state->max_depth > 0) {
+        gchar *root_id = find_root_node_id(id_to_label, leaf_to_path, state->signal_path);
+        if (root_id != NULL) {
+            GHashTable *rev_adjacency = extract_reverse_adjacency(dot);
+            boundary_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+            GHashTable *keep =
+                bfs_keep_within_depth(rev_adjacency, root_id, state->max_depth, boundary_ids);
+
+            gchar *pruned = prune_dot_to_keep_set(dot, keep);
+            gchar *marked = mark_boundary_labels(pruned, boundary_ids);
+            g_free(pruned);
+            g_free(dot);
+            dot = marked;
+
+            g_hash_table_unref(keep);
+            g_hash_table_unref(rev_adjacency);
+            g_free(root_id);
+        }
+    }
+
     GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
     GwTime cursor_time = gw_marker_get_position(primary_marker);
 
@@ -998,6 +1285,9 @@ static void refresh_schematic(SchematicState *state)
         g_free(annotated);
         g_hash_table_unref(id_to_label);
         g_hash_table_unref(leaf_to_path);
+        if (boundary_ids != NULL) {
+            g_hash_table_unref(boundary_ids);
+        }
         gchar *msg = g_strdup_printf("GTKWAVE | Rendering schematic failed: %s\n",
                                      error != NULL ? error->message : "unknown error");
         status_text(msg);
@@ -1014,7 +1304,7 @@ static void refresh_schematic(SchematicState *state)
 
     GPtrArray *nodes = NULL;
     if (plain_ok) {
-        nodes = parse_plain_nodes(plain_text, id_to_label, leaf_to_path);
+        nodes = parse_plain_nodes(plain_text, id_to_label, leaf_to_path, boundary_ids);
         g_free(plain_text);
     }
     // If -Tplain failed, click handling just silently finds no nodes
@@ -1023,6 +1313,9 @@ static void refresh_schematic(SchematicState *state)
 
     g_hash_table_unref(id_to_label);
     g_hash_table_unref(leaf_to_path);
+    if (boundary_ids != NULL) {
+        g_hash_table_unref(boundary_ids);
+    }
 
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(png_path, &error);
     g_unlink(png_path);
@@ -1080,7 +1373,10 @@ static void update_back_button_sensitivity(SchematicState *state)
 // double-clicking a node navigates in place (rather than spawning another
 // top-level window per hop, which would otherwise litter the desktop after
 // a few hops down a cone) -- pushing the signal navigated away from onto
-// `history`, so "Back" can return to it.
+// `history`, so "Back" can return to it. Resets the depth limit back to
+// the small default -- a fresh root signal gets its own fresh "start
+// small", rather than inheriting however far the previous one had been
+// expanded.
 static void schematic_navigate_to(SchematicState *state, const gchar *new_path)
 {
     if (state->history == NULL) {
@@ -1088,9 +1384,38 @@ static void schematic_navigate_to(SchematicState *state, const gchar *new_path)
     }
     g_ptr_array_add(state->history, state->signal_path); /* transfers ownership */
     state->signal_path = g_strdup(new_path);
+    set_max_depth(state, SCHEMATIC_DEFAULT_MAX_DEPTH);
 
     update_schematic_title(state);
     update_back_button_sensitivity(state);
+    refresh_schematic(state);
+}
+
+// Sets state->max_depth and keeps the toolbar spinner in sync (blocking
+// its own "value-changed" handler so this doesn't recurse/double-
+// refresh) -- the one place anything other than the user's own spinner
+// edit changes the depth, so the displayed value never drifts from
+// what's actually being rendered. Does not itself call
+// refresh_schematic() -- callers do that once, after any other state
+// (signal_path, history, ...) they're also changing is settled.
+static void set_max_depth(SchematicState *state, guint new_depth)
+{
+    state->max_depth = new_depth;
+    if (state->depth_spin != NULL) {
+        g_signal_handlers_block_by_func(state->depth_spin, G_CALLBACK(on_depth_spin_changed),
+                                        state);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(state->depth_spin), new_depth);
+        g_signal_handlers_unblock_by_func(state->depth_spin, G_CALLBACK(on_depth_spin_changed),
+                                          state);
+    }
+}
+
+// Grows the current depth limit (rather than resetting to unlimited --
+// keeps the "start small, reveal more on request" Cone Window model even
+// after several expansions) and re-renders the SAME root signal's cone.
+static void schematic_expand_depth(SchematicState *state)
+{
+    set_max_depth(state, state->max_depth + 2);
     refresh_schematic(state);
 }
 
@@ -1108,6 +1433,7 @@ static void on_back_clicked(GtkButton *button, gpointer user_data)
 
     g_free(state->signal_path);
     state->signal_path = prev_path; /* adopts the g_strdup'd copy history was holding */
+    set_max_depth(state, SCHEMATIC_DEFAULT_MAX_DEPTH);
 
     update_schematic_title(state);
     update_back_button_sensitivity(state);
@@ -1168,6 +1494,17 @@ static void on_zoom_100_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     set_zoom((SchematicState *)user_data, 1.0);
+}
+
+// User-driven depth change via the toolbar spinner (0 = unlimited) --
+// distinct from schematic_expand_depth()'s own programmatic +2 bump on a
+// boundary-node double-click, which keeps this same spinner in sync
+// rather than fighting it.
+static void on_depth_spin_changed(GtkSpinButton *widget, gpointer user_data)
+{
+    SchematicState *state = user_data;
+    state->max_depth = (guint)gtk_spin_button_get_value_as_int(widget);
+    refresh_schematic(state);
 }
 
 // Standard image-viewer/IDE scroll-wheel convention: plain wheel scrolls
@@ -1347,6 +1684,20 @@ void netlist_query_show_schematic(const char *signal_path)
     GtkWidget *back_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
     gtk_box_pack_start(GTK_BOX(toolbar), back_sep, FALSE, FALSE, 4);
 
+    GtkWidget *depth_label = gtk_label_new("Depth:");
+    gtk_box_pack_start(GTK_BOX(toolbar), depth_label, FALSE, FALSE, 0);
+
+    GtkWidget *depth_spin = gtk_spin_button_new_with_range(0, 99, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(depth_spin), SCHEMATIC_DEFAULT_MAX_DEPTH);
+    gtk_widget_set_tooltip_text(
+        depth_spin, "How many fan-in hops to show from this signal (0 = unlimited, the old "
+                   "behavior). A node at the edge of the current depth is marked \"(double-"
+                   "click: more)\" -- double-click it, or raise this, to see further upstream.");
+    gtk_box_pack_start(GTK_BOX(toolbar), depth_spin, FALSE, FALSE, 0);
+
+    GtkWidget *depth_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(toolbar), depth_sep, FALSE, FALSE, 4);
+
     GtkWidget *prev_button = gtk_button_new_with_label("\xe2\x97\x80 Prev Transition");
     gtk_widget_set_tooltip_text(
         prev_button, "Move the marker to this signal's previous transition, without leaving the "
@@ -1408,13 +1759,16 @@ void netlist_query_show_schematic(const char *signal_path)
     state->image = image;
     state->scrolled = scrolled;
     state->back_button = back_button;
+    state->depth_spin = depth_spin;
     state->zoom = 1.0;
+    state->max_depth = SCHEMATIC_DEFAULT_MAX_DEPTH;
     state->signal_path = g_strdup(signal_path);
     state->marker_handler_id =
         g_signal_connect(GLOBALS->project, "unnamed-marker-changed",
                          G_CALLBACK(on_marker_changed), state);
 
     g_signal_connect(back_button, "clicked", G_CALLBACK(on_back_clicked), state);
+    g_signal_connect(depth_spin, "value-changed", G_CALLBACK(on_depth_spin_changed), state);
     g_signal_connect(prev_button, "clicked", G_CALLBACK(on_prev_transition_clicked), state);
     g_signal_connect(next_button, "clicked", G_CALLBACK(on_next_transition_clicked), state);
     g_signal_connect(zoom_in_button, "clicked", G_CALLBACK(on_zoom_in_clicked), state);
