@@ -800,6 +800,43 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   `included_objects` model below would fix this naturally (each
   instance's internal hops would no longer compete with the others for
   one shared budget).
+- **Right-click menu + multi-select "Filter Out" for the gate-level
+  schematic view.** Reworked the click model directly on request
+  ("ideally you right click in schematic on component and it gives you
+  options like dissolve, filter... or ability to select 1, 2, 3 etc
+  with shift click, and it highlights"): plain click selects one node
+  (blue highlight, drawn by a "draw" signal connected with `_after()`
+  so it paints on top of the already-rendered image); shift+click
+  toggles a node in/out of a multi-selection without navigating
+  anywhere; right-click selects the node under the cursor first
+  (unless already part of a multi-selection, which is preserved) and
+  pops up a context menu -- "Dissolve" for any selected un-dissolved
+  instances (batched into one Yosys re-run), "Filter Out" for any
+  selected non-boundary-port objects (new `GateSchematicState::
+  filtered_out`, subtracted from the fan-in selection before submod/
+  show runs), and one "Collapse" entry per already-dissolved instance
+  regardless of the current selection (there's no click target left to
+  represent a dissolved instance as a whole once it's exposed as plain
+  gates). Double-click keeps its existing fast-path behavior unchanged.
+  Getting "Filter Out" right for more than one object at once needed
+  real Yosys selection-stack-machine semantics, confirmed empirically:
+  `select A obj1 obj2 %d` does NOT subtract both objects from A (`%d`
+  only pops the top two stack entries, so obj2 only ends up subtracted
+  from obj1, not from A, and both get silently re-unioned back into the
+  final result) -- a true "A minus (obj1 union obj2 union ...)" needs
+  (N-1) `%u` to fold the filtered objects into one set before a final
+  `%d` (`build_filter_suffix()`). Verified live via gdb, exercising the
+  real signal handlers directly: filtering one instance and filtering
+  two in one batch (confirming the `%u`-fold) both correctly shrank the
+  cone while leaving the rest intact; over-filtering down to nothing
+  surfaced Yosys/netlistsvg's own "no module" error rather than
+  crashing (a bit raw/unfriendly, not specially handled -- known minor
+  rough edge); a dissolve+collapse round trip via the real menu
+  handlers restored the exact original node count and instance; click/
+  shift-click/right-click selection semantics all confirmed via
+  synthetic `GdkEventButton` calls into the real click handler.
+  Known gap: no un-filter gesture yet (unlike dissolve's collapse) --
+  `filtered_out` only grows for now.
 
 ## Up next, in order
 
@@ -820,11 +857,14 @@ the conversation history for the full reasoning behind this ordering.
    StarVision -- a past gtkwave contributor, per `bus_ops.c`'s copyright
    line -- both work: start from one small element, grow the diagram
    one hop at a time on request, keep sub-modules as black boxes until
-   explicitly asked to dissolve). The simple MVP of "Start small"/
-   "Expand" (global `%ci<N>` hop-count depth spinner) and "Dissolve"
-   (per-instance `flatten`, black-box by default) are both done -- see
-   Done section above, including Dissolve's known shared-depth-budget
-   limitation. What's left is the richer per-net incremental model:
+   explicitly asked to dissolve). "Start small"/"Expand" (global
+   `%ci<N>` hop-count depth spinner), "Dissolve" (per-instance
+   `flatten`, black-box by default, with a right-click "Collapse" to
+   undo it), and "Filter Out" (right-click, multi-select via
+   shift-click) are all done -- see Done section above, including
+   Dissolve's known shared-depth-budget limitation and Filter's missing
+   un-filter gesture. What's left is the richer per-net incremental
+   model:
    - **Per-net "Start small"/"Expand"**: rather than one global hop-count
      limit, track the actual set of included Yosys object names
      (`included_objects`, seeded with just the root signal) and grow it
@@ -835,22 +875,23 @@ the conversation history for the full reasoning behind this ordering.
      "expand everything at the boundary by 2 more hops". This would also
      fix Dissolve's shared-depth-budget limitation, since each
      instance's internal hops would no longer compete with every other
-     instance for one global depth number. Confirmed during scoping: a
-     1-hop selection around `alu_result` produced a 3-cell, 356x184px
-     diagram (just the `alu` instance, kept as one black box, with
-     clean named ports) vs. the always-render-everything ~450-cell,
+     instance for one global depth number, and would make "un-filter"
+     natural too (just remove the object from `included_objects` again,
+     the same shape as Dissolve's existing Collapse). Confirmed during
+     scoping: a 1-hop selection around `alu_result` produced a 3-cell,
+     356x184px diagram (just the `alu` instance, kept as one black box,
+     with clean named ports) vs. the always-render-everything ~450-cell,
      5399x16100px full cone -- and a fresh Yosys invocation per
      expand-click (re-synthesizing from source each time, since Yosys
      has no interactive/incremental session mode) was fast enough in ad
      hoc testing (well under a second), though not stress-tested
      against a large real design yet.
-   - **Filter**: a visible way to prune the current diagram back down
-     (remove an included object, re-render) -- the inverse of expand;
-     not yet designed in detail, lowest priority.
-   - Click semantics would stay three-way: a boundary port connector ->
-     expand; an undissolved black-box instance -> dissolve (done); an
-     already-dissolved primitive gate -> existing click-to-source
-     (unchanged).
+   - Click/selection semantics would stay as they are now (plain-click
+     selects, shift-click multi-selects, right-click menu offers
+     Dissolve/Filter Out/Collapse as applicable, double-click keeps its
+     boundary-expand/single-instance-dissolve fast path) -- this item is
+     about the underlying *mechanism* (per-net vs. global-hop-count),
+     not the interaction model, which is already in place.
    - Known related gap, NOT solved by this plan: selecting/cross-probing
      an individual **wire** (as opposed to a gate/port box) still isn't
      possible -- netlistsvg's SVG gives no net identity to the
