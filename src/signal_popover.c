@@ -115,6 +115,32 @@ static GtkWidget *make_radix_button(const RadixEntry *entry)
     return button;
 }
 
+// Best-effort fully-qualified hierarchical path for a trace: its real
+// alias/full name if it has one (name_full -- only ever set for a signal
+// explicitly aliased, or restored from a saved session that had one; see
+// AddNodeTraceReturn()/AddVector() in analyzer.c, which only populate it
+// when an `aliasname` argument was actually passed), otherwise the
+// underlying node/vector's own name (nd->nname / vec->bvname) -- the
+// SAME discriminant trace_is_bus() below already uses, and the one true
+// full name every ordinary, non-aliased trace actually has (confirmed
+// directly against a live instance: an un-aliased signal just dragged
+// in from the SST tree has name_full == NULL, always, for every normal
+// add path -- AddVector()/AddNode()'s own callers all pass a NULL
+// aliasname except savefile.c restoring a previously-saved alias).
+// Unlike t->name, this is never shortened by GLOBALS->hier_max_level
+// (see hier_extract() in analyzer.c), so it's safe to feed into a
+// netlist backend that needs the real hierarchical path.
+static const gchar *trace_full_path(GwTrace *t)
+{
+    if (t->name_full != NULL) {
+        return t->name_full;
+    }
+    if (t->vector) {
+        return t->n.vec != NULL ? t->n.vec->bvname : NULL;
+    }
+    return t->n.nd != NULL ? t->n.nd->nname : NULL;
+}
+
 // Driver/load queries act on exactly one signal; picks the first
 // highlighted, named trace (the same highlight set the color/radix actions
 // above act on in bulk), since a fan-in/fan-out query only makes sense for
@@ -124,7 +150,7 @@ static GwTrace *find_target_trace(void)
     GwTrace *t = GLOBALS->traces.first;
     while (t != NULL) {
         if ((t->flags & TR_HIGHLIGHT) && !(t->flags & (TR_BLANK | TR_ANALOG_BLANK_STRETCH)) &&
-           t->name_full != NULL) {
+           trace_full_path(t) != NULL) {
             return t;
         }
         t = t->t_next;
@@ -166,13 +192,14 @@ static gboolean trace_is_bus(GwTrace *t)
 // behaves exactly as before.
 static gchar *build_query_signal_path(GwTrace *t, GtkEntry *range_entry)
 {
+    const gchar *full_path = trace_full_path(t);
     if (range_entry != NULL) {
         const gchar *range_text = gtk_entry_get_text(range_entry);
         if (range_text != NULL && range_text[0] != '\0') {
-            return g_strdup_printf("%s[%s]", t->name_full, range_text);
+            return g_strdup_printf("%s[%s]", full_path, range_text);
         }
     }
-    return g_strdup(t->name_full);
+    return g_strdup(full_path);
 }
 
 static void on_show_drivers_clicked(GtkButton *button, gpointer user_data)
@@ -242,7 +269,7 @@ static void on_show_gate_schematic_clicked(GtkButton *button, gpointer user_data
         status_text("GTKWAVE | Select a signal first to show its gate-level schematic.\n");
         return;
     }
-    netlist_query_show_gate_schematic(t->name_full);
+    netlist_query_show_gate_schematic(trace_full_path(t));
 }
 
 static void on_show_event_report_clicked(GtkButton *button, gpointer user_data)
