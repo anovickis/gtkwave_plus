@@ -926,6 +926,28 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   entry point left for now; it could be wired back up under different,
   unambiguous terminology (e.g. "Show RTL Dataflow Graph") if ever
   wanted again, rather than under "schematic"/"cone of logic".
+- **Strip unrelated sibling output ports from the gate-level cone of
+  logic.** Per direct feedback: querying `alu_result`'s cone also
+  showed `alu_zero`, a completely unrelated output of the same `alu`
+  instance with no bearing on `alu_result`'s value -- "it's another
+  output and it should not be shown... only things that alter the
+  alu_result should be shown". Root cause confirmed directly against a
+  real Yosys run: `submod` always gives an included cell a complete,
+  valid port set, so pulling in the whole `alu` cell (as the driver of
+  `result`) also exposes its unrelated `zero` output as a second
+  boundary port -- not specific to one cell either, confirmed the same
+  thing happens with a register file's unused read ports at deeper
+  depths. Fixed by stripping every output port of the submod-extracted
+  cone except the one actually queried (`extract_select_leaf_name()` +
+  `opt_clean -purge`), guarded by Yosys's own `-assert-min 1` so a
+  never-expected match failure aborts cleanly instead of silently
+  stripping the real target too. Scoped to the netlistsvg/JSON path
+  only -- the dot-based fallback has no equivalent extracted module to
+  prune in the same way (a known, narrower gap on that already-reduced-
+  capability path). Verified live via gdb with a real signal from the
+  dump file's own symbol table: `alu_result`'s cone now yields exactly
+  5 nodes (the instance, the one output, and its 3 true inputs) -- no
+  `alu_zero` anywhere in the result.
 - **Fixed a crash reading a multi-bit signal's value before its first
   real sample** (`local_trace_asciival()` in `gw-mouseover.c`, the
   backend behind the schematic view's live value annotation and the
