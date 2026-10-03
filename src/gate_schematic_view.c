@@ -290,6 +290,11 @@ static void jump_to_gate_node_source(const gchar *href)
     g_regex_unref(re);
 }
 
+// Forward declaration -- defined below alongside extract_select_leaf_name(),
+// which it's the direct counterpart of; run_yosys() (right below) needs it
+// first.
+static gchar *build_ancestor_flatten_clause(const gchar *select_expr);
+
 // Runs Yosys end-to-end for `top_module`/`select_expr` and returns the
 // raw DOT text it wrote (via `-format dot`), including its per-node
 // `href="path:line.col-line.col"` source-location attributes (from
@@ -337,20 +342,24 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
         g_strlcpy(hop_arg, "%ci*", sizeof(hop_arg));
     }
 
+    gchar *ancestor_flatten = build_ancestor_flatten_clause(select_expr);
+
     GString *script = g_string_new("read_verilog -sv -defer");
     for (guint i = 0; i < GLOBALS->netlist_source_files->len; i++) {
         g_string_append_printf(
             script, " \"%s\"", (const gchar *)g_ptr_array_index(GLOBALS->netlist_source_files, i));
     }
     g_string_append_printf(script,
-                          "; hierarchy -check -top %s; proc; %smemory_collect; opt; techmap; "
+                          "; hierarchy -check -top %s; proc; %s%smemory_collect; opt; techmap; "
                           "opt; select %s %s%s; show -format dot -prefix %s -notitle -href",
                           top_module,
+                          ancestor_flatten,
                           flatten_clause,
                           select_expr,
                           hop_arg,
                           filter_suffix,
                           prefix);
+    g_free(ancestor_flatten);
 
     gchar *yosys_bin = g_find_program_in_path("yosys");
     if (yosys_bin == NULL) {
@@ -471,28 +480,84 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
 // rendering.
 #define GATE_CONE_SUBMODULE_NAME "gtkwave_cone"
 
-// Extracts the bare leaf name from a Yosys select expression of the
-// form "<module>/<relative.path>" (see make_yosys_select()) -- e.g.
-// "alu_result" from "cpu_top/alu_result", or "step" from
-// "cpu_top/u_seq.step". This is exactly the port name submod() gives
-// the queried signal in the extracted cone module, confirmed directly
-// against a real Yosys run regardless of nesting depth -- used to
-// identify (and keep) the one legitimate output port of the cone,
-// stripping any others (see the "fan-in cone shows a sibling output
-// port of a black-box cell that has nothing to do with the queried
-// signal" fix in run_yosys_json()'s own comment).
-static gchar *extract_select_leaf_name(const gchar *select_expr)
+// Extracts the relative part of a Yosys select expression of the form
+// "<module>/<relative.path>" (see make_yosys_select()) -- e.g.
+// "alu_result" from "cpu_top/alu_result", or "u_seq.step" from
+// "cpu_top/u_seq.step" (the WHOLE dotted remainder, not just "step" --
+// see below). This is exactly the port name submod() gives the queried
+// signal in the extracted cone module in the common case -- confirmed
+// directly against a real Yosys run for a signal with no dot in its
+// relative path at all (this project's own first, shallower test
+// design never exercised anything else), and also for one that does
+// have a dot but is otherwise only ever known by that one flattened
+// dotted name throughout the whole design (e.g. "u_exec.rf_rdata_b", or
+// an internal-only intermediate like "u_exec.u_alu.wide_result") --
+// used to identify (and keep) the one legitimate output port of the
+// cone, stripping any others (see the "fan-in cone shows a sibling
+// output port of a black-box cell that has nothing to do with the
+// queried signal" fix in run_yosys_json()'s own comment).
+//
+// Known, NOT handled here: a signal that's ALSO re-declared under a
+// different name one or more levels further out, connected by nothing
+// but a straight port connection the whole way (e.g. this project's own
+// second, deeper test design's ALU outputs -- "result"/"zero"/"carry"/
+// "overflow"/"negative" -- each immediately re-wired to its own
+// "alu_"-prefixed wire the next level up). Confirmed directly that
+// Yosys's own `opt` either collapses such a wire into the outer name
+// instead (so this function's answer doesn't match what submod actually
+// produced) or, for a multi-bit bus only ever consumed bit-by-bit by
+// further derived signals (like "result"), eliminates it as a single
+// named object entirely once nothing in the selected cone still needs
+// it as one indivisible bus -- in which case there is no single correct
+// port name to find at all. Either way, run_yosys_json()'s own
+// `-assert-min 1` guard turns this into a normal, reported failure
+// ("yosys did not produce a gate-level netlist for this signal")
+// instead of a wrong diagram -- not yet a fix; see TODO.md.
+static gchar *extract_select_relative_path(const gchar *select_expr)
 {
-    const gchar *leaf = select_expr;
-    const gchar *last_slash = strrchr(select_expr, '/');
-    if (last_slash != NULL && last_slash + 1 > leaf) {
-        leaf = last_slash + 1;
+    const gchar *slash = strchr(select_expr, '/');
+    return g_strdup(slash != NULL ? slash + 1 : select_expr);
+}
+
+// Yosys's "/" selection syntax only ever resolves ONE level of cell
+// nesting below the named top module -- confirmed directly against a
+// real Yosys run: "top/cellA" resolves to a cell, but neither
+// "top/cellA/cellB" nor "top/cellA.wire_inside_cellB" resolves to
+// anything ("did not match any object"), even though make_yosys_select()
+// happily builds exactly that second form whenever the queried signal
+// lives two or more hierarchy levels below the dut (e.g.
+// "u_exec.u_alu.result" for a signal nested inside a sub-module's own
+// sub-module) -- an everyday case in real RTL, not a corner case. The
+// dotted form only becomes selectable once Yosys's own `flatten` has
+// actually run and renamed the wire to that same "cellA.cellB.wire"
+// form itself. Rather than require the user to have already dissolved
+// every ancestor on the way to the signal (state->dissolved_instances,
+// see build_flatten_clause()), this unconditionally flattens just the
+// immediate child cell of the top module on the path to the queried
+// signal -- confirmed directly that `flatten <cell>` recurses into
+// everything beneath it, so one flatten is enough regardless of how
+// much deeper the real nesting goes. Flattening the same cell twice
+// (e.g. it's also in state->dissolved_instances) is harmless -- also
+// confirmed directly, Yosys just no-ops the second one. Returns ""
+// when the signal lives directly in the top/dut module itself (no dot
+// in the relative path at all), in which case nothing needs flattening.
+static gchar *build_ancestor_flatten_clause(const gchar *select_expr)
+{
+    const gchar *slash = strchr(select_expr, '/');
+    if (slash == NULL) {
+        return g_strdup("");
     }
-    const gchar *last_dot = strrchr(select_expr, '.');
-    if (last_dot != NULL && last_dot + 1 > leaf) {
-        leaf = last_dot + 1;
+    const gchar *rel = slash + 1;
+    const gchar *dot = strchr(rel, '.');
+    if (dot == NULL) {
+        return g_strdup("");
     }
-    return g_strdup(leaf);
+    gchar *module_part = g_strndup(select_expr, (gsize)(slash - select_expr));
+    gchar *child = g_strndup(rel, (gsize)(dot - rel));
+    gchar *clause = g_strdup_printf("flatten %s/%s; ", module_part, child);
+    g_free(module_part);
+    g_free(child);
+    return clause;
 }
 
 // `max_depth` (0 = unlimited) bounds the fan-in cone to that many hops
@@ -513,17 +578,17 @@ static gchar *extract_select_leaf_name(const gchar *select_expr)
 // depends on `zero`. Per direct feedback ("alu_zero... is not decisive
 // to the input of [alu_result]... it should not be shown"), the fix
 // below strips every output port except the one actually queried
-// (`root_leaf`) right after `submod`, then runs `opt_clean -purge` to
-// drop the now-genuinely-dead internal wire -- confirmed this generalizes
-// correctly at deeper depths (u_rf's `rdata_a`/`rdata_b` and u_alu's
-// `zero` all correctly stripped, cells themselves untouched). The
-// `-assert-min 1` guard matters: if `root_leaf` ever failed to match
-// (should never happen -- confirmed it's always submod's exact port
-// name for the queried net, regardless of nesting depth), subtracting
-// an empty set from "all outputs" would silently strip the one output
-// actually wanted too; asserting first makes that abort the whole Yosys
-// run (a normal, already-handled failure here) instead of silently
-// corrupting the result.
+// (`root_leaf`, see extract_select_relative_path()'s own comment for
+// the one case it still can't name correctly) right after `submod`,
+// then runs `opt_clean -purge` to drop the now-genuinely-dead internal
+// wire -- confirmed this generalizes correctly at deeper depths (u_rf's
+// `rdata_a`/`rdata_b` and u_alu's `zero` all correctly stripped, cells
+// themselves untouched). The `-assert-min 1` guard matters: if
+// `root_leaf` ever fails to match, subtracting an empty set from "all
+// outputs" would silently strip the one output actually wanted too;
+// asserting first makes that abort the whole Yosys run (a normal,
+// already-handled failure, see extract_select_relative_path()) instead
+// of silently corrupting the result.
 static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr, guint max_depth,
                                const gchar *flatten_clause, const gchar *filter_suffix,
                                gchar **out_json_text, GError **error)
@@ -544,7 +609,9 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
         g_strlcpy(hop_arg, "%ci*", sizeof(hop_arg));
     }
 
-    gchar *root_leaf = extract_select_leaf_name(select_expr);
+    gchar *ancestor_flatten = build_ancestor_flatten_clause(select_expr);
+
+    gchar *root_leaf = extract_select_relative_path(select_expr);
     gchar *prune_suffix = g_strdup_printf(
         "; select " GATE_CONE_SUBMODULE_NAME "/%s -assert-min 1; "
         "select " GATE_CONE_SUBMODULE_NAME "/o:* " GATE_CONE_SUBMODULE_NAME "/%s %%d; "
@@ -559,10 +626,11 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
             script, " \"%s\"", (const gchar *)g_ptr_array_index(GLOBALS->netlist_source_files, i));
     }
     g_string_append_printf(script,
-                          "; hierarchy -check -top %s; proc; %smemory_collect; opt; techmap; "
+                          "; hierarchy -check -top %s; proc; %s%smemory_collect; opt; techmap; "
                           "opt; select %s %s%s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
                           "%s; select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
                           top_module,
+                          ancestor_flatten,
                           flatten_clause,
                           select_expr,
                           hop_arg,
@@ -570,6 +638,7 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
                           prune_suffix,
                           prefix);
     g_free(prune_suffix);
+    g_free(ancestor_flatten);
 
     gchar *yosys_bin = g_find_program_in_path("yosys");
     if (yosys_bin == NULL) {
