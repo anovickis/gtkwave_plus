@@ -1204,9 +1204,75 @@ static void refresh_schematic(SchematicState *state)
 
     GwNetlistQuery *query = netlist_query_new_from_config();
 
-    gchar *dot = gw_netlist_query_get_cone_dot(query, state->signal_path, &error);
+    // get_cone_dot() is backed by slang-netlist's `--fan-in`, which
+    // (unlike `--drivers`) doesn't accept a bit-range suffix -- see
+    // netlist_query_has_bit_range_suffix()'s own doc comment. Widen to
+    // the whole bus rather than fail outright.
+    gchar *base_path;
+    if (netlist_query_has_bit_range_suffix(state->signal_path)) {
+        base_path = netlist_query_strip_bit_range_suffix(state->signal_path);
+        status_text("GTKWAVE | Schematic view doesn't support bit-range slicing -- showing the "
+                   "whole bus instead.\n");
+    } else {
+        base_path = g_strdup(state->signal_path);
+    }
+
+    const gchar *query_path = base_path;
+    gchar *retry_path = NULL;
+    gchar *dot = gw_netlist_query_get_cone_dot(query, query_path, &error);
+
+    // The configured top is very often the VCD's own dump-root scope (see
+    // guess_top_module() in netlist_query_ui.c), which for a design
+    // loaded as a full testbench is the testbench itself. A plain
+    // top-level wire declared directly in that wrapper (as opposed to
+    // inside the DUT instance it elaborates) is often not independently
+    // resolvable by slang-netlist even though gtkwave's own node table
+    // has it -- if that's exactly why this failed, retry one hierarchy
+    // level deeper inside the auto-detected DUT instance before giving
+    // up. Same fallback as netlist_query_ui.c's run_query_and_show().
+    if (dot == NULL && GLOBALS->netlist_top_module != NULL &&
+        error->message != NULL && strstr(error->message, "could not find node") != NULL) {
+        gchar *detected_module_type = NULL;
+        gchar *detected_instance_name = NULL;
+
+        if (netlist_query_find_dut_instance(
+                GLOBALS->netlist_top_module, &detected_module_type, &detected_instance_name)) {
+            gchar *top_prefix = g_strconcat(GLOBALS->netlist_top_module, ".", NULL);
+            gchar *dut_prefix =
+                g_strconcat(GLOBALS->netlist_top_module, ".", detected_instance_name, ".", NULL);
+
+            if (g_str_has_prefix(base_path, top_prefix) &&
+                !g_str_has_prefix(base_path, dut_prefix)) {
+                retry_path = g_strconcat(dut_prefix, base_path + strlen(top_prefix), NULL);
+
+                g_clear_error(&error);
+                dot = gw_netlist_query_get_cone_dot(query, retry_path, &error);
+
+                if (dot != NULL) {
+                    gchar *msg = g_strdup_printf(
+                        "GTKWAVE | '%s' wasn't directly resolvable -- used '%s' (inside "
+                        "auto-detected instance '%s') instead.\n",
+                        state->signal_path,
+                        retry_path,
+                        detected_instance_name);
+                    status_text(msg);
+                    g_free(msg);
+                    query_path = retry_path;
+                }
+            }
+
+            g_free(top_prefix);
+            g_free(dut_prefix);
+        }
+
+        g_free(detected_module_type);
+        g_free(detected_instance_name);
+    }
+
     if (dot == NULL) {
         g_object_unref(query);
+        g_free(retry_path);
+        g_free(base_path);
         gchar *msg = g_strdup_printf("GTKWAVE | Schematic query failed for '%s': %s\n",
                                      state->signal_path,
                                      error != NULL ? error->message : "unknown error");
@@ -1220,7 +1286,9 @@ static void refresh_schematic(SchematicState *state)
     // real signal paths for value annotation and click handling. If this
     // fails, the schematic still renders, just without value labels or
     // click-to-signal resolution.
-    GPtrArray *fanin_edges = gw_netlist_query_get_fanin(query, state->signal_path, NULL);
+    GPtrArray *fanin_edges = gw_netlist_query_get_fanin(query, query_path, NULL);
+    g_free(retry_path);
+    g_free(base_path);
     g_object_unref(query);
 
     GHashTable *leaf_to_path = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);

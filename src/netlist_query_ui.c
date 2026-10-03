@@ -1,9 +1,131 @@
 #include <config.h>
 #include <gtkwave.h>
+#include <string.h>
 #include "netlist_query_ui.h"
 #include "globals.h"
 #include "source_panel.h"
 #include "status.h"
+
+// Verilog/SystemVerilog keywords that could otherwise be mistaken for a
+// module-instance's type/instance name by netlist_query_find_dut_instance()'s
+// plain-text scan below.
+static const char *const sv_keywords[] = {
+    "if",      "else",      "begin",     "end",         "always",
+    "always_ff", "always_comb", "always_latch", "assign", "input",
+    "output",  "inout",     "logic",     "wire",        "reg",
+    "integer", "real",      "initial",   "function",    "endfunction",
+    "task",    "endtask",   "generate",  "endgenerate", "for",
+    "while",   "case",      "casex",     "casez",       "endcase",
+    "module",  "endmodule", "parameter", "localparam",  "typedef",
+    "struct",  "enum",      "union",     "packed",      "signed",
+    "unsigned", "posedge",  "negedge",   "default",     "return",
+    "genvar",  "event",     "time",      "bit",         "byte",
+    "shortint", "int",      "longint",   "string",      "void",
+    "static",  "automatic", "const",     "interface",   "endinterface",
+    "unique",  "priority",  NULL,
+};
+
+static gboolean is_sv_keyword(const gchar *token)
+{
+    for (int i = 0; sv_keywords[i] != NULL; i++) {
+        if (strcmp(token, sv_keywords[i]) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+// See netlist_query_ui.h's own doc comment. Deliberately scoped to the
+// common case (one real DUT instantiated directly in the testbench, no
+// generate blocks or instance arrays); doesn't need to be a real Verilog
+// parser since a miss just means no auto-detection, not a wrong answer.
+gboolean netlist_query_find_dut_instance(const gchar *wrapper_module, gchar **out_module_type,
+                                         gchar **out_instance_name)
+{
+    if (GLOBALS->netlist_source_files == NULL) {
+        return FALSE;
+    }
+
+    gchar *escaped_wrapper = g_regex_escape_string(wrapper_module, -1);
+    gchar *module_pattern = g_strdup_printf("\\bmodule\\s+%s\\b", escaped_wrapper);
+    GRegex *module_re = g_regex_new(module_pattern, 0, 0, NULL);
+    g_free(module_pattern);
+    g_free(escaped_wrapper);
+
+    // id1 [ '#' '(' balanced-one-level ')' ] id2 '(' -- a module
+    // instantiation, with or without a parameter override block.
+    GRegex *inst_re = g_regex_new("\\b([A-Za-z_][A-Za-z0-9_$]*)\\s*"
+                                  "(?:#\\s*\\((?:[^()]|\\([^()]*\\))*\\)\\s*)?"
+                                  "([A-Za-z_][A-Za-z0-9_$]*)\\s*\\(",
+                                  0,
+                                  0,
+                                  NULL);
+
+    gboolean found = FALSE;
+
+    for (guint i = 0; i < GLOBALS->netlist_source_files->len && !found; i++) {
+        const gchar *path = g_ptr_array_index(GLOBALS->netlist_source_files, i);
+        gchar *contents = NULL;
+        if (!g_file_get_contents(path, &contents, NULL, NULL)) {
+            continue;
+        }
+
+        // Strip comments so they can't be mistaken for real code -- naive
+        // (doesn't understand strings containing "//"/"/*"), adequate for
+        // the common case this heuristic targets.
+        GRegex *block_comment_re = g_regex_new("/\\*.*?\\*/", G_REGEX_DOTALL, 0, NULL);
+        gchar *no_block_comments =
+            g_regex_replace_literal(block_comment_re, contents, -1, 0, " ", 0, NULL);
+        g_regex_unref(block_comment_re);
+        g_free(contents);
+
+        GRegex *line_comment_re = g_regex_new("//[^\\n]*", 0, 0, NULL);
+        gchar *clean =
+            g_regex_replace_literal(line_comment_re, no_block_comments, -1, 0, "", 0, NULL);
+        g_regex_unref(line_comment_re);
+        g_free(no_block_comments);
+
+        GMatchInfo *module_match = NULL;
+        if (g_regex_match(module_re, clean, 0, &module_match)) {
+            gint start_pos = 0;
+            g_match_info_fetch_pos(module_match, 0, &start_pos, NULL);
+
+            // Body ends at the next "endmodule" after the match --
+            // standard Verilog never nests module...endmodule.
+            const gchar *body_start = clean + start_pos;
+            const gchar *endmod = strstr(body_start, "endmodule");
+            gsize body_len = endmod != NULL ? (gsize)(endmod - body_start) : strlen(body_start);
+            gchar *body = g_strndup(body_start, body_len);
+
+            GMatchInfo *inst_match = NULL;
+            g_regex_match(inst_re, body, 0, &inst_match);
+            while (g_match_info_matches(inst_match)) {
+                gchar *type_candidate = g_match_info_fetch(inst_match, 1);
+                gchar *inst_candidate = g_match_info_fetch(inst_match, 2);
+
+                if (!is_sv_keyword(type_candidate) && !is_sv_keyword(inst_candidate)) {
+                    *out_module_type = type_candidate;
+                    *out_instance_name = inst_candidate;
+                    found = TRUE;
+                    break;
+                }
+
+                g_free(type_candidate);
+                g_free(inst_candidate);
+                g_match_info_next(inst_match, NULL);
+            }
+            g_match_info_free(inst_match);
+            g_free(body);
+        }
+        g_match_info_free(module_match);
+
+        g_free(clean);
+    }
+
+    g_regex_unref(module_re);
+    g_regex_unref(inst_re);
+    return found;
+}
 
 // Design-source configuration (GLOBALS->netlist_source_files/top_module) is
 // asked for once per session, the first time a driver/load query is made,
@@ -104,6 +226,22 @@ static void on_choose_files_clicked(GtkButton *button, gpointer user_data)
     }
     gtk_label_set_text(GTK_LABEL(state->files_label), display->str);
     g_string_free(display, TRUE);
+}
+
+// See netlist_query_ui.h's own doc comment.
+gboolean netlist_query_has_bit_range_suffix(const gchar *path)
+{
+    const gchar *bracket = strrchr(path, '[');
+    return bracket != NULL && g_str_has_suffix(path, "]");
+}
+
+gchar *netlist_query_strip_bit_range_suffix(const gchar *path)
+{
+    const gchar *bracket = strrchr(path, '[');
+    if (!netlist_query_has_bit_range_suffix(path)) {
+        return g_strdup(path);
+    }
+    return g_strndup(path, (gsize)(bracket - path));
 }
 
 // Returns TRUE once GLOBALS->netlist_source_files/netlist_top_module are
@@ -345,6 +483,37 @@ static void results_window_state_free(gpointer data)
     g_free(state);
 }
 
+static GPtrArray *run_one_query(GwNetlistQuery *query, QueryKind kind, const gchar *signal_path,
+                                const GwNetlistQueryLimits *limits, GError **error)
+{
+    switch (kind) {
+    case QUERY_KIND_DRIVERS:
+        return gw_netlist_query_get_drivers(query, signal_path, error);
+    case QUERY_KIND_LOADS:
+        return gw_netlist_query_get_loads_limited(query, signal_path, limits, error);
+    case QUERY_KIND_FANIN:
+        return gw_netlist_query_get_fanin_limited(query, signal_path, limits, error);
+    default:
+        g_assert_not_reached();
+    }
+}
+
+// slang-netlist's fixed error text when a queried signal path can't be
+// resolved against the currently-elaborated top -- confirmed directly
+// against a real slang-netlist run: a plain wire declared directly in
+// the testbench wrapper (not inside the DUT instance it elaborates) is
+// genuinely absent from slang-netlist's own queryable node set, even
+// though gtkwave's own VCD-side node table has it (and even though the
+// SAME leaf path, one hierarchy level deeper inside the auto-detected
+// DUT instance, resolves fine with the SAME --top). The Yosys-backed
+// gate-level schematic view has its own, differently-shaped version of
+// this same "configured top is a testbench wrapper" problem -- see
+// yosys_error_suggests_testbench() in gate_schematic_view.c.
+static gboolean netlist_query_error_suggests_missing_node(const gchar *message)
+{
+    return message != NULL && strstr(message, "could not find node") != NULL;
+}
+
 static void populate_results(ResultsWindowState *state)
 {
     GList *children = gtk_container_get_children(GTK_CONTAINER(state->listbox));
@@ -364,23 +533,73 @@ static void populate_results(ResultsWindowState *state)
             gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(state->boundary_check)),
     };
 
+    // QUERY_KIND_DRIVERS's `--drivers <name[bit-range]>` accepts a bit-
+    // range suffix just fine, but `--fan-in`/`--fan-out` (behind LOADS/
+    // FANIN) don't -- see netlist_query_has_bit_range_suffix()'s own doc
+    // comment. Widen to the whole bus rather than fail outright.
+    gchar *query_path;
+    if (state->kind != QUERY_KIND_DRIVERS &&
+        netlist_query_has_bit_range_suffix(state->signal_path)) {
+        query_path = netlist_query_strip_bit_range_suffix(state->signal_path);
+        status_text("GTKWAVE | This query doesn't support bit-range slicing -- showing results "
+                   "for the whole bus instead.\n");
+    } else {
+        query_path = g_strdup(state->signal_path);
+    }
+
     GError *error = NULL;
-    GPtrArray *edges = NULL;
-    switch (state->kind) {
-    case QUERY_KIND_DRIVERS:
-        edges = gw_netlist_query_get_drivers(query, state->signal_path, &error);
-        break;
-    case QUERY_KIND_LOADS:
-        edges = gw_netlist_query_get_loads_limited(query, state->signal_path, &limits, &error);
-        break;
-    case QUERY_KIND_FANIN:
-        edges = gw_netlist_query_get_fanin_limited(query, state->signal_path, &limits, &error);
-        break;
-    default:
-        g_assert_not_reached();
+    GPtrArray *edges = run_one_query(query, state->kind, query_path, &limits, &error);
+
+    // The configured top is very often the VCD's own dump-root scope (see
+    // guess_top_module()), which for a design loaded as a full testbench
+    // is the testbench itself. A plain top-level wire declared directly
+    // in that wrapper (as opposed to inside the DUT instance it
+    // elaborates) is often not independently resolvable by slang-netlist
+    // even though gtkwave's own node table has it -- if that's exactly
+    // why this failed, retry one hierarchy level deeper inside the
+    // auto-detected DUT instance before giving up.
+    if (edges == NULL && GLOBALS->netlist_top_module != NULL &&
+        netlist_query_error_suggests_missing_node(error->message)) {
+        gchar *detected_module_type = NULL;
+        gchar *detected_instance_name = NULL;
+
+        if (netlist_query_find_dut_instance(
+                GLOBALS->netlist_top_module, &detected_module_type, &detected_instance_name)) {
+            gchar *top_prefix = g_strconcat(GLOBALS->netlist_top_module, ".", NULL);
+            gchar *dut_prefix =
+                g_strconcat(GLOBALS->netlist_top_module, ".", detected_instance_name, ".", NULL);
+
+            if (g_str_has_prefix(query_path, top_prefix) &&
+                !g_str_has_prefix(query_path, dut_prefix)) {
+                gchar *retry_path =
+                    g_strconcat(dut_prefix, query_path + strlen(top_prefix), NULL);
+
+                g_clear_error(&error);
+                edges = run_one_query(query, state->kind, retry_path, &limits, &error);
+
+                if (edges != NULL) {
+                    gchar *msg = g_strdup_printf(
+                        "GTKWAVE | '%s' wasn't directly resolvable -- used '%s' (inside "
+                        "auto-detected instance '%s') instead.\n",
+                        state->signal_path,
+                        retry_path,
+                        detected_instance_name);
+                    status_text(msg);
+                    g_free(msg);
+                }
+                g_free(retry_path);
+            }
+
+            g_free(top_prefix);
+            g_free(dut_prefix);
+        }
+
+        g_free(detected_module_type);
+        g_free(detected_instance_name);
     }
 
     g_object_unref(query);
+    g_free(query_path);
 
     if (edges == NULL) {
         gchar *msg = g_strdup_printf("GTKWAVE | Netlist query failed for '%s': %s\n",

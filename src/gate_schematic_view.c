@@ -88,132 +88,6 @@ static gchar *make_yosys_select(const gchar *yosys_top_module, const gchar *stri
     return result;
 }
 
-// Verilog/SystemVerilog keywords that could otherwise be mistaken for a
-// module-instance's type/instance name by find_dut_instance()'s plain-
-// text scan below.
-static const char *const sv_keywords[] = {
-    "if",      "else",      "begin",     "end",         "always",
-    "always_ff", "always_comb", "always_latch", "assign", "input",
-    "output",  "inout",     "logic",     "wire",        "reg",
-    "integer", "real",      "initial",   "function",    "endfunction",
-    "task",    "endtask",   "generate",  "endgenerate", "for",
-    "while",   "case",      "casex",     "casez",       "endcase",
-    "module",  "endmodule", "parameter", "localparam",  "typedef",
-    "struct",  "enum",      "union",     "packed",      "signed",
-    "unsigned", "posedge",  "negedge",   "default",     "return",
-    "genvar",  "event",     "time",      "bit",         "byte",
-    "shortint", "int",      "longint",   "string",      "void",
-    "static",  "automatic", "const",     "interface",   "endinterface",
-    "unique",  "priority",  NULL,
-};
-
-static gboolean is_sv_keyword(const gchar *token)
-{
-    for (int i = 0; sv_keywords[i] != NULL; i++) {
-        if (strcmp(token, sv_keywords[i]) == 0) {
-            return TRUE;
-        }
-    }
-    return FALSE;
-}
-
-// Best-effort plain-text scan for the first module instantiation inside
-// `wrapper_module`'s body across the configured source files, e.g. finds
-// "top dut (...);" inside "module tb; ... endmodule". Returns FALSE
-// (leaving the out-params untouched) if nothing matches -- the caller
-// treats that as "couldn't auto-detect", not a hard failure, and just
-// surfaces the original Yosys error unchanged. Deliberately scoped to the
-// common case (one real DUT instantiated directly in the testbench, no
-// generate blocks or instance arrays); doesn't need to be a real Verilog
-// parser since a miss just means no auto-detection, not a wrong answer.
-static gboolean find_dut_instance(const gchar *wrapper_module, gchar **out_module_type,
-                                  gchar **out_instance_name)
-{
-    if (GLOBALS->netlist_source_files == NULL) {
-        return FALSE;
-    }
-
-    gchar *escaped_wrapper = g_regex_escape_string(wrapper_module, -1);
-    gchar *module_pattern = g_strdup_printf("\\bmodule\\s+%s\\b", escaped_wrapper);
-    GRegex *module_re = g_regex_new(module_pattern, 0, 0, NULL);
-    g_free(module_pattern);
-    g_free(escaped_wrapper);
-
-    // id1 [ '#' '(' balanced-one-level ')' ] id2 '(' -- a module
-    // instantiation, with or without a parameter override block.
-    GRegex *inst_re = g_regex_new("\\b([A-Za-z_][A-Za-z0-9_$]*)\\s*"
-                                  "(?:#\\s*\\((?:[^()]|\\([^()]*\\))*\\)\\s*)?"
-                                  "([A-Za-z_][A-Za-z0-9_$]*)\\s*\\(",
-                                  0,
-                                  0,
-                                  NULL);
-
-    gboolean found = FALSE;
-
-    for (guint i = 0; i < GLOBALS->netlist_source_files->len && !found; i++) {
-        const gchar *path = g_ptr_array_index(GLOBALS->netlist_source_files, i);
-        gchar *contents = NULL;
-        if (!g_file_get_contents(path, &contents, NULL, NULL)) {
-            continue;
-        }
-
-        // Strip comments so they can't be mistaken for real code -- naive
-        // (doesn't understand strings containing "//"/"/*"), adequate for
-        // the common case this heuristic targets.
-        GRegex *block_comment_re = g_regex_new("/\\*.*?\\*/", G_REGEX_DOTALL, 0, NULL);
-        gchar *no_block_comments =
-            g_regex_replace_literal(block_comment_re, contents, -1, 0, " ", 0, NULL);
-        g_regex_unref(block_comment_re);
-        g_free(contents);
-
-        GRegex *line_comment_re = g_regex_new("//[^\\n]*", 0, 0, NULL);
-        gchar *clean =
-            g_regex_replace_literal(line_comment_re, no_block_comments, -1, 0, "", 0, NULL);
-        g_regex_unref(line_comment_re);
-        g_free(no_block_comments);
-
-        GMatchInfo *module_match = NULL;
-        if (g_regex_match(module_re, clean, 0, &module_match)) {
-            gint start_pos = 0;
-            g_match_info_fetch_pos(module_match, 0, &start_pos, NULL);
-
-            // Body ends at the next "endmodule" after the match --
-            // standard Verilog never nests module...endmodule.
-            const gchar *body_start = clean + start_pos;
-            const gchar *endmod = strstr(body_start, "endmodule");
-            gsize body_len = endmod != NULL ? (gsize)(endmod - body_start) : strlen(body_start);
-            gchar *body = g_strndup(body_start, body_len);
-
-            GMatchInfo *inst_match = NULL;
-            g_regex_match(inst_re, body, 0, &inst_match);
-            while (g_match_info_matches(inst_match)) {
-                gchar *type_candidate = g_match_info_fetch(inst_match, 1);
-                gchar *inst_candidate = g_match_info_fetch(inst_match, 2);
-
-                if (!is_sv_keyword(type_candidate) && !is_sv_keyword(inst_candidate)) {
-                    *out_module_type = type_candidate;
-                    *out_instance_name = inst_candidate;
-                    found = TRUE;
-                    break;
-                }
-
-                g_free(type_candidate);
-                g_free(inst_candidate);
-                g_match_info_next(inst_match, NULL);
-            }
-            g_match_info_free(inst_match);
-            g_free(body);
-        }
-        g_match_info_free(module_match);
-
-        g_free(clean);
-    }
-
-    g_regex_unref(module_re);
-    g_regex_unref(inst_re);
-    return found;
-}
-
 // Yosys's fixed error text for a `$finish`/`$stop` hit during its own
 // AST->RTLIL compilation -- the specific, recognizable symptom of trying
 // to synthesize a testbench (or a module only reachable through one)
@@ -1967,7 +1841,7 @@ static gchar *build_filter_suffix(GateSchematicState *state)
 // Re-queries Yosys for state->signal_path's fan-in cone at the current
 // state->max_depth (via `%ci<N>`/`%ci*`, see run_yosys()/run_yosys_json())
 // and re-renders it. The testbench-vs-real-DUT auto-detection fallback
-// (see find_dut_instance()'s own comment) only runs the first time this
+// (see netlist_query_find_dut_instance()'s own comment) only runs the first time this
 // is called for a given window -- once top_module/select_prefix resolve
 // (or GLOBALS->netlist_top_module already worked directly), they're
 // cached on `state` so a later depth-spinner tick or boundary-port
@@ -2024,7 +1898,8 @@ static void gate_refresh_schematic(GateSchematicState *state)
             gchar *detected_module_type = NULL;
             gchar *detected_instance_name = NULL;
 
-            if (find_dut_instance(top_module, &detected_module_type, &detected_instance_name)) {
+            if (netlist_query_find_dut_instance(
+                    top_module, &detected_module_type, &detected_instance_name)) {
                 g_clear_error(&error);
 
                 gchar *instance_prefix =
