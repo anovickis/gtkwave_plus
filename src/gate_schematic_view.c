@@ -31,6 +31,7 @@ static void gate_refresh_schematic(GateSchematicState *state);
 static void gate_set_max_depth(GateSchematicState *state, guint new_depth);
 static void gate_expand_depth(GateSchematicState *state);
 static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data);
+static void gate_dissolve_instance(GateSchematicState *state, const gchar *instance_id);
 
 // Translates gtkwave's own dot-delimited hierarchical path (e.g.
 // "tb.dut.u_counter.count_q") into Yosys's `select` syntax
@@ -275,6 +276,20 @@ typedef struct
                                 further to expand). Double-clicking one grows
                                 the depth limit instead of the click-to-source
                                 behavior an internal gate gets. */
+    gboolean is_module_instance; /* TRUE for a cell whose Yosys type is a
+                                 user module name rather than a `$`-prefixed
+                                 primitive -- an un-dissolved sub-module
+                                 instance, rendered as one black-box symbol
+                                 by netlistsvg's generic-cell fallback shape.
+                                 Single-click still jumps to its
+                                 instantiation source (same as any other
+                                 cell with an href); double-click dissolves
+                                 it instead of the "double-click only
+                                 expands..." message a plain primitive gets.
+                                 `id` is the cell's own name (e.g. "u_alu"),
+                                 which combined with the top module is
+                                 exactly the Yosys object name `flatten`
+                                 needs to dissolve it. */
     gdouble x, y, w, h; /* pixel-space, top-left corner + size */
 } GateNodeInfo;
 
@@ -402,9 +417,13 @@ static void jump_to_gate_node_source(const gchar *href)
 // `href="path:line.col-line.col"` source-location attributes (from
 // `-href`) -- used both for click-to-source (see jump_to_gate_node_source())
 // and, after inject_ortho_splines() touches it up, as the final render
-// source. Caller owns *out_dot_text (g_free).
+// source. `flatten_clause` is either "" (nothing dissolved yet -- every
+// sub-module instance stays an opaque black-box cell) or a caller-built
+// `"flatten <obj> <obj> ...; "` fragment (see gate_refresh_schematic())
+// naming exactly the dissolved instances to inline. Caller owns
+// *out_dot_text (g_free).
 static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, guint max_depth,
-                          gchar **out_dot_text, GError **error)
+                          const gchar *flatten_clause, gchar **out_dot_text, GError **error)
 {
     gchar *dot_path = NULL;
     gint dot_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.dot", &dot_path, error);
@@ -442,9 +461,10 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
             script, " \"%s\"", (const gchar *)g_ptr_array_index(GLOBALS->netlist_source_files, i));
     }
     g_string_append_printf(script,
-                          "; hierarchy -check -top %s; proc; flatten; opt; techmap; opt; "
-                          "select %s %s; show -format dot -prefix %s -notitle -href",
+                          "; hierarchy -check -top %s; proc; %smemory_collect; opt; techmap; "
+                          "opt; select %s %s; show -format dot -prefix %s -notitle -href",
                           top_module,
+                          flatten_clause,
                           select_expr,
                           hop_arg,
                           prefix);
@@ -550,19 +570,34 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
 // left boundary wires with no port identity at all, and netlistsvg drew
 // nothing distinctive for them.
 //
-// `submod` requires memories to be already lowered to flip-flops first
-// (it refuses to touch a module that still contains `$mem`-type cells),
-// hence `memory;` ahead of `techmap` here, which this file's dot-based
-// path doesn't need (plain `show` has no such restriction).
+// `submod` refuses to touch a module that still contains raw `$memrd`/
+// `$memwr` memory-primitive cells ("contains memories (run 'memory' pass
+// first)"), hence `memory_collect;` ahead of `techmap` here -- but
+// `memory_collect` alone (confirmed directly against a real Yosys run,
+// with and without it) coalesces those primitives into a single
+// `$mem_v2` cell *without* also mapping it down to one flip-flop per
+// word the way the full `memory;` macro does, so an HDL register array
+// (e.g. a register file's `logic [W-1:0] regs[DEPTH]`) still renders as
+// one block with wide bus ports instead of `DEPTH` separate boxes.
+// `flatten_clause` below only matters for this at all once something
+// containing a memory array has actually been dissolved into the top
+// module being submod'd -- an un-dissolved instance's own internals
+// (memories included) stay untouched either way. This file's dot-based
+// path doesn't strictly need memory_collect for submod's sake (`show`
+// has no such restriction), but gets it too for the same one-block
+// rendering.
 #define GATE_CONE_SUBMODULE_NAME "gtkwave_cone"
 
 // `max_depth` (0 = unlimited) bounds the fan-in cone to that many hops
 // via Yosys's own `%ci<N>` selection operator (`%ci*` when unlimited) --
 // unlike the RTL schematic view's own depth limiting, no custom BFS is
 // needed here: Yosys's selection language already has hop-count-limited
-// fan-in built in.
+// fan-in built in. `flatten_clause` is either "" (nothing dissolved yet)
+// or a caller-built `"flatten <obj> <obj> ...; "` fragment -- see
+// run_yosys()'s own doc comment, and gate_refresh_schematic() for how
+// it's built from state->dissolved_instances.
 static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr, guint max_depth,
-                               gchar **out_json_text, GError **error)
+                               const gchar *flatten_clause, gchar **out_json_text, GError **error)
 {
     gchar *json_path = NULL;
     gint json_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.json", &json_path, error);
@@ -586,10 +621,11 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
             script, " \"%s\"", (const gchar *)g_ptr_array_index(GLOBALS->netlist_source_files, i));
     }
     g_string_append_printf(script,
-                          "; hierarchy -check -top %s; proc; flatten; memory; opt; techmap; opt; "
-                          "select %s %s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
+                          "; hierarchy -check -top %s; proc; %smemory_collect; opt; techmap; "
+                          "opt; select %s %s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
                           "select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
                           top_module,
+                          flatten_clause,
                           select_expr,
                           hop_arg,
                           prefix);
@@ -722,6 +758,60 @@ static GHashTable *extract_cell_srcs_from_json(const gchar *json_text, const gch
 
     g_object_unref(parser);
     return srcs;
+}
+
+// Returns the set ({id -> NULL}, member test via g_hash_table_contains())
+// of cell ids in `top_module` whose Yosys cell `type` is a plain user
+// module name (an un-dissolved sub-module instance) rather than a
+// `$`-prefixed primitive (gate, mux, `$mem_v2`, ...). Confirmed directly
+// against a real Yosys run: an un-flattened instance cell's JSON `type`
+// is exactly the instantiated module's name (e.g. `"alu"`), and its own
+// id is exactly the instance name (e.g. `"u_alu"`) -- no mangling, since
+// submod only renames cells it has to flatten/absorb, not ones it leaves
+// untouched. That id is exactly the Yosys object name (combined with
+// `top_module`) that "Dissolve" needs to `flatten` it.
+static GHashTable *extract_module_instance_ids_from_json(const gchar *json_text,
+                                                         const gchar *top_module)
+{
+    GHashTable *instances = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    JsonParser *parser = json_parser_new();
+    if (!json_parser_load_from_data(parser, json_text, -1, NULL)) {
+        g_object_unref(parser);
+        return instances;
+    }
+
+    JsonObject *root_obj = json_node_get_object(json_parser_get_root(parser));
+    if (root_obj == NULL || !json_object_has_member(root_obj, "modules")) {
+        g_object_unref(parser);
+        return instances;
+    }
+
+    JsonObject *modules = json_object_get_object_member(root_obj, "modules");
+    if (!json_object_has_member(modules, top_module)) {
+        g_object_unref(parser);
+        return instances;
+    }
+
+    JsonObject *mod = json_object_get_object_member(modules, top_module);
+    if (json_object_has_member(mod, "cells")) {
+        JsonObject *cells = json_object_get_object_member(mod, "cells");
+        GList *cell_names = json_object_get_members(cells);
+        for (GList *l = cell_names; l != NULL; l = l->next) {
+            const gchar *cell_id = l->data;
+            JsonObject *cell = json_object_get_object_member(cells, cell_id);
+            if (cell != NULL && json_object_has_member(cell, "type")) {
+                const gchar *type = json_object_get_string_member(cell, "type");
+                if (type != NULL && type[0] != '$') {
+                    g_hash_table_insert(instances, g_strdup(cell_id), NULL);
+                }
+            }
+        }
+        g_list_free(cell_names);
+    }
+
+    g_object_unref(parser);
+    return instances;
 }
 
 // Runs the `netlistsvg` CLI (https://github.com/nturley/netlistsvg,
@@ -885,10 +975,13 @@ static gboolean render_svg_text_to_png(const gchar *svg_text, gchar **out_png_pa
 // render_svg_text_to_png()'s comment on why no DPI conversion is needed)
 // and cross-references the cell's HDL source location via id_to_src
 // (from the JSON netlist's own `attributes.src`, see
-// extract_cell_srcs_from_json()). Reuses GateNodeInfo/find_gate_node_at()
-// unchanged from the dot-based path -- same struct, just a different
-// source of (id, href, bbox) triples.
-static GPtrArray *parse_netlistsvg_cell_nodes(const gchar *svg_text, GHashTable *id_to_src)
+// extract_cell_srcs_from_json()) and whether it's an un-dissolved
+// sub-module instance via id_to_instance (see
+// extract_module_instance_ids_from_json()). Reuses GateNodeInfo/
+// find_gate_node_at() unchanged from the dot-based path -- same struct,
+// just a different source of (id, href, bbox) triples.
+static GPtrArray *parse_netlistsvg_cell_nodes(const gchar *svg_text, GHashTable *id_to_src,
+                                              GHashTable *id_to_instance)
 {
     GPtrArray *nodes = g_ptr_array_new_with_free_func(gate_node_info_free);
     GRegex *re = g_regex_new(
@@ -918,6 +1011,7 @@ static GPtrArray *parse_netlistsvg_cell_nodes(const gchar *svg_text, GHashTable 
 
         const gchar *src = g_hash_table_lookup(id_to_src, info->id);
         info->href = src != NULL ? g_strdup(src) : NULL;
+        info->is_module_instance = g_hash_table_contains(id_to_instance, info->id);
 
         g_ptr_array_add(nodes, info);
 
@@ -1101,6 +1195,15 @@ struct GateSchematicState
                       window (Verdi/StarVision "start small" Cone Window
                       model) rather than always rendering the whole cone. */
     GPtrArray *nodes; /* GateNodeInfo*, this render's hit-testing data */
+    GPtrArray *dissolved_instances; /* owned gchar*, each a `flatten`-ready
+                                     Yosys object name (e.g.
+                                     "cpu_top/u_rf") for a sub-module
+                                     instance the user has double-clicked
+                                     to dissolve -- empty (NULL) until the
+                                     first dissolve. Persists for the life
+                                     of the window; grows one instance at a
+                                     time, never shrinks (no "re-collapse"
+                                     gesture yet). */
     gdouble zoom;
 };
 
@@ -1112,6 +1215,9 @@ static void gate_schematic_state_free(gpointer data)
     }
     if (state->nodes != NULL) {
         g_ptr_array_unref(state->nodes);
+    }
+    if (state->dissolved_instances != NULL) {
+        g_ptr_array_unref(state->dissolved_instances);
     }
     g_free(state->signal_path);
     g_free(state->top_module);
@@ -1231,6 +1337,32 @@ static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data
 {
     GateSchematicState *state = user_data;
     state->max_depth = (guint)gtk_spin_button_get_value_as_int(widget);
+    gate_refresh_schematic(state);
+}
+
+// Double-clicking an un-dissolved sub-module instance (see GateNodeInfo's
+// own comment) adds it to state->dissolved_instances -- as
+// "<top_module>/<instance_id>", exactly the Yosys object name
+// build_flatten_clause() needs -- and re-renders, which pulls its
+// internals into view (and may introduce fresh boundary ports/further
+// dissolvable instances around what used to be its black-box edge, per
+// TODO.md's "Dissolve" design). Grows only; no "re-collapse" gesture yet.
+// `instance_id` is the clicked node's own GateNodeInfo::id, e.g. "u_alu".
+static void gate_dissolve_instance(GateSchematicState *state, const gchar *instance_id)
+{
+    if (state->dissolved_instances == NULL) {
+        state->dissolved_instances = g_ptr_array_new_with_free_func(g_free);
+    }
+
+    gchar *selector = g_strconcat(state->top_module, "/", instance_id, NULL);
+    for (guint i = 0; i < state->dissolved_instances->len; i++) {
+        if (g_str_equal(g_ptr_array_index(state->dissolved_instances, i), selector)) {
+            g_free(selector); /* already dissolved -- nothing to do */
+            return;
+        }
+    }
+    g_ptr_array_add(state->dissolved_instances, selector); /* adopts selector */
+
     gate_refresh_schematic(state);
 }
 
@@ -1367,17 +1499,24 @@ static void on_gate_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAlloca
 
 // Hit-tests the click against this render's node boxes (built from
 // -Tplain or netlistsvg's own SVG, see parse_gate_plain_nodes()/
-// parse_netlistsvg_cell_nodes()). Single-click on an internal gate/cell
+// parse_netlistsvg_cell_nodes()). Click semantics are three-way, per
+// TODO.md's Cone Window plan: single-click on a plain internal gate/cell
 // jumps the source cross-probe panel to its HDL source location, if
 // Yosys could attribute one; single-click on a boundary port connector
-// just names it as such; double-click on a boundary port connector
-// expands the depth limit instead (see gate_expand_depth()) -- the
-// gate-level view's analogue of the RTL schematic view's own boundary-
-// node double-click behavior. No right-click/context-menu/Add to
-// Waveform yet -- unlike the RTL schematic view, there's no gtkwave
-// signal path to drive those with (Yosys's post-techmap names don't map
-// back to the original RTL signal names, see this file's own header
-// comment).
+// or an un-dissolved sub-module instance does the same (an instance's
+// `src` is its instantiation statement) but also hints at the
+// double-click gesture available on it; double-click on a boundary port
+// connector expands the depth limit (gate_expand_depth()); double-click
+// on an un-dissolved instance dissolves it instead (gate_dissolve_
+// instance()), pulling its internals into view. No right-click/context-
+// menu/Add to Waveform yet -- unlike the RTL schematic view, there's no
+// gtkwave signal path to drive those with (Yosys's post-techmap names
+// don't map back to the original RTL signal names, see this file's own
+// header comment). Dot-fallback note: is_module_instance is never set
+// on that path (parse_gate_plain_nodes() doesn't extract cell types), so
+// without netlistsvg installed, a sub-module instance currently behaves
+// like a plain gate (click-to-source only, no dissolve gesture) -- a
+// known, narrower gap than the netlistsvg path, not a regression.
 static gboolean
 on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
@@ -1398,14 +1537,21 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
     if (event->type == GDK_2BUTTON_PRESS) {
         if (node->is_boundary_port) {
             gate_expand_depth(state);
+        } else if (node->is_module_instance) {
+            gate_dissolve_instance(state, node->id);
         } else {
-            status_text("GTKWAVE | Double-click only expands at a boundary port connector.\n");
+            status_text("GTKWAVE | Double-click only expands a boundary port or dissolves a "
+                       "sub-module instance.\n");
         }
         return TRUE;
     }
 
     if (node->is_boundary_port) {
         status_text("GTKWAVE | Boundary port -- double-click to show more upstream.\n");
+    } else if (node->is_module_instance && node->href != NULL) {
+        jump_to_gate_node_source(node->href);
+        status_text("GTKWAVE | Sub-module instance -- double-click to dissolve into its "
+                   "internal gates.\n");
     } else if (node->href != NULL) {
         jump_to_gate_node_source(node->href);
     } else {
@@ -1414,6 +1560,26 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
             "away or a floating net label).\n");
     }
     return TRUE;
+}
+
+// Builds the `"flatten <obj> <obj> ...; "` script fragment (run_yosys()/
+// run_yosys_json()'s `flatten_clause` parameter) from
+// state->dissolved_instances, or "" if nothing's been dissolved yet (in
+// which case every sub-module instance stays an opaque black-box cell).
+// Caller owns the returned string (g_free).
+static gchar *build_flatten_clause(GateSchematicState *state)
+{
+    if (state->dissolved_instances == NULL || state->dissolved_instances->len == 0) {
+        return g_strdup("");
+    }
+
+    GString *clause = g_string_new("flatten");
+    for (guint i = 0; i < state->dissolved_instances->len; i++) {
+        g_string_append_c(clause, ' ');
+        g_string_append(clause, (const gchar *)g_ptr_array_index(state->dissolved_instances, i));
+    }
+    g_string_append(clause, "; ");
+    return g_string_free(clause, FALSE);
 }
 
 // Re-queries Yosys for state->signal_path's fan-in cone at the current
@@ -1442,23 +1608,25 @@ static void gate_refresh_schematic(GateSchematicState *state)
     GError *error = NULL;
     gchar *dot_text = NULL; /* used only when !use_netlistsvg */
     gchar *json_text = NULL; /* used only when use_netlistsvg */
+    gchar *flatten_clause = build_flatten_clause(state);
     gboolean ok;
 
     if (state->top_module != NULL) {
         gchar *select_expr =
             make_yosys_select(state->top_module, state->select_prefix, state->signal_path);
         ok = use_netlistsvg ? run_yosys_json(state->top_module, select_expr, state->max_depth,
-                                             &json_text, &error)
+                                             flatten_clause, &json_text, &error)
                            : run_yosys(state->top_module, select_expr, state->max_depth,
-                                       &dot_text, &error);
+                                       flatten_clause, &dot_text, &error);
         g_free(select_expr);
     } else {
         const gchar *top_module = GLOBALS->netlist_top_module;
         gchar *select_expr = make_yosys_select(top_module, top_module, state->signal_path);
 
-        ok = use_netlistsvg
-                 ? run_yosys_json(top_module, select_expr, state->max_depth, &json_text, &error)
-                 : run_yosys(top_module, select_expr, state->max_depth, &dot_text, &error);
+        ok = use_netlistsvg ? run_yosys_json(top_module, select_expr, state->max_depth,
+                                             flatten_clause, &json_text, &error)
+                           : run_yosys(top_module, select_expr, state->max_depth, flatten_clause,
+                                       &dot_text, &error);
         g_free(select_expr);
 
         // The configured top is very often the VCD's own dump-root scope
@@ -1480,9 +1648,11 @@ static void gate_refresh_schematic(GateSchematicState *state)
                     make_yosys_select(detected_module_type, instance_prefix, state->signal_path);
 
                 ok = use_netlistsvg ? run_yosys_json(detected_module_type, retry_select,
-                                                     state->max_depth, &json_text, &error)
+                                                     state->max_depth, flatten_clause,
+                                                     &json_text, &error)
                                    : run_yosys(detected_module_type, retry_select,
-                                               state->max_depth, &dot_text, &error);
+                                               state->max_depth, flatten_clause, &dot_text,
+                                               &error);
                 g_free(retry_select);
 
                 if (ok) {
@@ -1513,6 +1683,8 @@ static void gate_refresh_schematic(GateSchematicState *state)
             state->select_prefix = g_strdup(top_module);
         }
     }
+
+    g_free(flatten_clause);
 
     if (!ok) {
         gchar *msg = g_strdup_printf("GTKWAVE | Gate-level schematic failed for '%s': %s\n",
@@ -1562,12 +1734,15 @@ static void gate_refresh_schematic(GateSchematicState *state)
             return;
         }
 
-        // Best-effort: used only for click-to-source. If anything here
-        // comes up empty, the schematic still displays, it just isn't
-        // clickable.
+        // Best-effort: used only for click-to-source/dissolve. If
+        // anything here comes up empty, the schematic still displays, it
+        // just isn't clickable.
         GHashTable *id_to_src = extract_cell_srcs_from_json(json_text, GATE_CONE_SUBMODULE_NAME);
-        nodes = parse_netlistsvg_cell_nodes(svg_text, id_to_src);
+        GHashTable *id_to_instance =
+            extract_module_instance_ids_from_json(json_text, GATE_CONE_SUBMODULE_NAME);
+        nodes = parse_netlistsvg_cell_nodes(svg_text, id_to_src, id_to_instance);
         g_hash_table_unref(id_to_src);
+        g_hash_table_unref(id_to_instance);
         g_free(svg_text);
         g_free(json_text);
 
