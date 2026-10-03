@@ -869,6 +869,40 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   signal's exact shape (no alias, highlighted, backed by a real node)
   now correctly resolves its full path through both the real Show
   Drivers and Show Gate Schematic click handlers.
+- **Fixed RTL netlist queries (Show Drivers/Loads/Cone of Logic/
+  Schematic) failing for testbench-level and bit-ranged signals.** Two
+  independent bugs, both confirmed by directly exercising the real
+  slang-netlist CLI: (1) a plain wire declared directly in the
+  testbench wrapper (not inside the DUT instance it elaborates) is
+  genuinely absent from slang-netlist's queryable node set when the
+  configured top is that wrapper, even though gtkwave's own VCD-side
+  table has it, and even though the same leaf path one level deeper
+  inside the auto-detected DUT instance resolves fine -- exactly the
+  "configured top is a testbench wrapper" problem the Yosys-backed gate
+  schematic already solved, but never ported to this path. Moved
+  `find_dut_instance()` into shared `netlist_query_ui.c`/`.h` (as
+  `netlist_query_find_dut_instance()`) and added the same auto-retry to
+  `run_query_and_show()`/`refresh_schematic()`. (2) slang-netlist's
+  `--drivers` accepts a bit-range suffix but `--fan-in`/`--fan-out`
+  (behind Loads/Cone/Schematic) do not -- added shared
+  `netlist_query_has_bit_range_suffix()`/`strip_bit_range_suffix()`
+  helpers (mirroring the gate schematic's existing private Yosys-side
+  copy) and strip the suffix before those three query kinds, with a
+  status note that the whole bus is shown instead. Verified live via
+  gdb end to end: "Show Cone of Logic" on a real bus signal with both
+  problems at once now strips the range, retries with the DUT instance
+  inserted, and returns real populated results with working jump-to-
+  source links (confirmed visually via screenshot).
+  Known remaining limitation, NOT fixed here: a plain pass-through wire
+  at ANY intermediate hierarchy level (not just the outermost
+  testbench-to-DUT boundary) has the same "could not find node"
+  problem -- confirmed: `tb.dut.step` (a module's own internal
+  connecting wire for a sub-instance's output) still fails, while
+  `tb.dut.u_seq.step` (the actual driving instance) succeeds directly.
+  The one-level DUT-insertion fallback only covers the single most
+  common case; a fully general fix would need to walk down through
+  every intermediate pass-through instance, which needs port-
+  connectivity information this fix doesn't have.
 
 ## Up next, in order
 
