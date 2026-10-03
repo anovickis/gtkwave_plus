@@ -766,6 +766,40 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   boundary-port flagging work correctly; auto-detection from testbench
   `tb` to DUT `cpu_top` (instance `tb.dut`) also confirmed still
   working through the restructuring.
+- **"Dissolve" for the gate-level schematic view.** Sub-module instances
+  no longer get unconditionally flattened: a newly-opened cone now
+  starts with every instance as a single black-box symbol, and
+  double-clicking one adds it to `GateSchematicState::dissolved_instances`
+  and re-runs Yosys with a `flatten <that instance's selection>;`
+  fragment (instead of the old blanket `flatten;`) to reveal just its
+  internals -- confirmed selective: dissolving one instance leaves
+  sibling instances un-dissolved. Detection reuses Yosys's own JSON: an
+  un-flattened instance cell's `type` is the plain module name (not a
+  `$`-prefixed primitive) and its id is exactly the instance name
+  `flatten` needs -- new `extract_module_instance_ids_from_json()` and
+  `GateNodeInfo::is_module_instance`. Also swapped the old unconditional
+  `memory;` (maps a memory array to one flip-flop per word) for
+  `memory_collect;` (coalesces to a single `$mem_v2` cell, still
+  satisfies submod's "no raw memory cells" rule) -- confirmed directly:
+  dissolving `regfile`'s `regs[DEPTH]` array now renders as **one block
+  with wide bus ports** instead of `DEPTH` separate boxes, per explicit
+  request ("if you have an array of flops, just draw one block and use
+  a wide connection on input and output -- ie use busses"). Verified
+  live via gdb: a fresh cone defaulted to 3 black-box instances with
+  none flattened; dissolving `u_alu` grew 6->14 nodes; dissolving `u_rf`
+  (separately, before a deep `u_alu` dissolve could eat the whole depth
+  budget -- see known limitation below) grew 9->19 nodes with exactly
+  one `u_rf.regs` ($mem_v2) node, not 8 separate per-word flops.
+  Known limitation, not yet addressed: the depth spinner is still one
+  *global* hop-count budget shared across both un-dissolved instances
+  and dissolved ones' now-exposed internals -- dissolving a
+  primitive-heavy instance (confirmed with `u_alu`'s bit-blasted
+  8-bit case statement: ~180 gates) can consume the entire budget just
+  traversing its own internals, never reaching far enough to show
+  sibling instances even at a much higher depth. The per-net
+  `included_objects` model below would fix this naturally (each
+  instance's internal hops would no longer compete with the others for
+  one shared budget).
 
 ## Up next, in order
 
@@ -786,14 +820,11 @@ the conversation history for the full reasoning behind this ordering.
    StarVision -- a past gtkwave contributor, per `bus_ops.c`'s copyright
    line -- both work: start from one small element, grow the diagram
    one hop at a time on request, keep sub-modules as black boxes until
-   explicitly asked to dissolve). Scoped and empirically validated this
-   session (both load-bearing mechanisms confirmed working against the
-   real toy-CPU test design, not just read about). The simple MVP of
-   "Start small"/"Expand" -- a global `%ci<N>` hop-count limit with a
-   depth spinner and double-click-to-grow-by-2 on any boundary port,
-   re-querying Yosys fresh each time rather than tracking per-net state
-   -- is now done (see Done section above). What's left is the richer,
-   per-net incremental model described below:
+   explicitly asked to dissolve). The simple MVP of "Start small"/
+   "Expand" (global `%ci<N>` hop-count depth spinner) and "Dissolve"
+   (per-instance `flatten`, black-box by default) are both done -- see
+   Done section above, including Dissolve's known shared-depth-budget
+   limitation. What's left is the richer per-net incremental model:
    - **Per-net "Start small"/"Expand"**: rather than one global hop-count
      limit, track the actual set of included Yosys object names
      (`included_objects`, seeded with just the root signal) and grow it
@@ -801,40 +832,25 @@ the conversation history for the full reasoning behind this ordering.
      pulls in only what's immediately upstream/downstream of *that* net
      (a fresh one-hop `%ci`/`%co` query seeded from the clicked port's
      net name, unioned into `included_objects`), rather than today's
-     "expand everything at the boundary by 2 more hops". Confirmed
-     during scoping: a 1-hop selection around `alu_result` produced a
-     3-cell, 356x184px diagram (just the `alu` instance, kept as one
-     black box, with clean named ports) vs. the always-render-everything
-     ~450-cell, 5399x16100px full cone -- and a fresh Yosys invocation
-     per expand-click (re-synthesizing from source each time, since
-     Yosys has no interactive/incremental session mode) was fast enough
-     in ad hoc testing (well under a second), though not stress-tested
+     "expand everything at the boundary by 2 more hops". This would also
+     fix Dissolve's shared-depth-budget limitation, since each
+     instance's internal hops would no longer compete with every other
+     instance for one global depth number. Confirmed during scoping: a
+     1-hop selection around `alu_result` produced a 3-cell, 356x184px
+     diagram (just the `alu` instance, kept as one black box, with
+     clean named ports) vs. the always-render-everything ~450-cell,
+     5399x16100px full cone -- and a fresh Yosys invocation per
+     expand-click (re-synthesizing from source each time, since Yosys
+     has no interactive/incremental session mode) was fast enough in ad
+     hoc testing (well under a second), though not stress-tested
      against a large real design yet.
-   - **"Dissolve"**: a sub-module instance (any Yosys cell whose type is
-     a user module, not a `$_AND_`-style primitive) starts as a single
-     black box -- confirmed: selecting a non-flattened module instance
-     and `submod`-extracting it still renders as one labeled box via
-     netlistsvg's generic-cell fallback shape, not its internal gates.
-     Clicking it should add its instance path to a persisted
-     "dissolved" set and re-run with `flatten <that instance's
-     selection>` (confirmed `flatten` accepts a selection argument, not
-     just whole-design) instead of today's unconditional global
-     `flatten;`, then re-render -- which will itself introduce new
-     boundary ports around what used to be the instance's black-box
-     edge, ready for further expand/dissolve.
-   - **New persistent per-window state** (`GateSchematicState`):
-     `included_objects` (explicit Yosys object names pulled in so far,
-     seeded with just the root signal) and `dissolved_instances`
-     (instance paths to flatten, starts empty); a single rebuild
-     function re-derives the whole Yosys script from both sets on every
-     interaction.
    - **Filter**: a visible way to prune the current diagram back down
      (remove an included object, re-render) -- the inverse of expand;
-     not yet designed in detail, lowest priority of the three verbs.
-   - Click semantics become three-way depending on what's clicked: a
-     boundary port connector -> expand; an undissolved black-box
-     instance -> dissolve; an already-dissolved primitive gate -> the
-     existing click-to-source behavior, unchanged.
+     not yet designed in detail, lowest priority.
+   - Click semantics would stay three-way: a boundary port connector ->
+     expand; an undissolved black-box instance -> dissolve (done); an
+     already-dissolved primitive gate -> existing click-to-source
+     (unchanged).
    - Known related gap, NOT solved by this plan: selecting/cross-probing
      an individual **wire** (as opposed to a gate/port box) still isn't
      possible -- netlistsvg's SVG gives no net identity to the
@@ -842,7 +858,9 @@ the conversation history for the full reasoning behind this ordering.
      need patching netlistsvg or a different renderer; out of scope
      here.
    - The RTL (slang-netlist) schematic view's own "start small, expand"
-     sibling piece is now done -- see above.
+     sibling piece is now done -- see above (it has no dissolve concept
+     of its own, since it's pre-synthesis and has no gates to black-box
+     module instances around).
 
 4. **RTL schematic layout editing** (reposition instances by hand,
    print/capture an edited layout). What's left of the original
