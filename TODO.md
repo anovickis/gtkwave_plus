@@ -837,6 +837,19 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   synthetic `GdkEventButton` calls into the real click handler.
   Known gap: no un-filter gesture yet (unlike dissolve's collapse) --
   `filtered_out` only grows for now.
+- **Fixed double-click word selection splitting identifiers at
+  underscores** in the embedded source cross-probe panel
+  (`source_panel.c`). Root cause: GtkTextView's own built-in double-
+  click word-selection (Pango's word-break segmentation) treats `_` as
+  a boundary, so double-clicking "rdata_a" only selected a fragment --
+  a GTK/Pango default, not anything this file was configuring.
+  Overridden via the `"extend-selection"` signal, reusing the same
+  `[A-Za-z0-9_]` identifier character class already used elsewhere in
+  this file for syntax highlighting. Verified via gdb: calling the new
+  handler directly at the exact position GTK's default would normally
+  split (the final `a` of `rdata_a`) now selects the whole 7-character
+  identifier (offsets 9-16); triple-click's line-select granularity
+  still correctly falls through to GTK's own default handling.
 
 ## Up next, in order
 
