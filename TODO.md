@@ -903,15 +903,29 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   common case; a fully general fix would need to walk down through
   every intermediate pass-through instance, which needs port-
   connectivity information this fix doesn't have.
-- **"Show Cone of Logic" now opens the schematic diagram, not a flat
-  list.** It used to run the same fan-in query ("Show Schematic"
-  already used) through a text results-list window instead of a
-  diagram -- per direct feedback ("show cone of logic provides a list,
-  we should be showing a schematic"), repointed it at the diagram and
-  removed the now fully-redundant list code path (`QUERY_KIND_FANIN`,
-  `netlist_query_show_cone()`) rather than leave two buttons doing the
-  same thing. The surviving button keeps the "Show Cone of Logic"
-  label.
+- **"Show Cone of Logic" now opens the real gate-level schematic
+  diagram, not a flat list or an RTL flow chart.** Two rounds, per
+  direct feedback: (1) it used to run the same fan-in query ("Show
+  Schematic" already used) through a text results-list window instead
+  of a diagram ("show cone of logic provides a list, we should be
+  showing a schematic") -- repointed it at schematic_view.c's RTL
+  dataflow-graph diagram and removed the now-redundant list code path
+  (`QUERY_KIND_FANIN`, `netlist_query_show_cone()`). (2) that RTL
+  diagram was immediately (and correctly) rejected too ("now it opens a
+  window labeled schematic, but what we get is a flow chart") -- an
+  architectural reality of that view (no gates exist pre-synthesis), not
+  a bug in it, and exactly the same complaint from earlier this session
+  about that same view. Repointed again, this time at
+  gate_schematic_view.c's real Yosys-synthesized gate-level diagram
+  (confirmed visually: a black-box `alu` instance, bus-width port
+  labels, orthogonal wiring) -- making it identical to the separate
+  "Show Gate Schematic (SVG)" button, which was removed as the
+  resulting duplication. Window title changed from "Gate-Level
+  Schematic: %s" to "Cone of Logic: %s" to match. `schematic_view.c`
+  (the RTL view) is untouched and still compiles -- just has no UI
+  entry point left for now; it could be wired back up under different,
+  unambiguous terminology (e.g. "Show RTL Dataflow Graph") if ever
+  wanted again, rather than under "schematic"/"cone of logic".
 - **Fixed a crash reading a multi-bit signal's value before its first
   real sample** (`local_trace_asciival()` in `gw-mouseover.c`, the
   backend behind the schematic view's live value annotation and the
