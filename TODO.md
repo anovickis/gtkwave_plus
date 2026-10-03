@@ -744,6 +744,28 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   remaining truncated) with the spinner's displayed value confirmed in
   sync; driving the spinner directly down to depth 1 correctly shrank
   the render to 2 nodes.
+- **Depth-limited "Cone Window" rendering for the gate-level schematic
+  view.** The simpler, global-hop-count MVP of item 3 below's "Start
+  small"/"Expand" verbs (not the full per-net `included_objects`
+  incremental-expansion model that item still describes -- see its
+  trimmed-down remaining scope): a newly-opened window now seeds from
+  Yosys's `%ci<N>` fan-in-hop selection operator at
+  `GATE_SCHEMATIC_DEFAULT_MAX_DEPTH` (2) hops instead of always
+  rendering the full `%ci*` transitive cone, with a toolbar "Depth:"
+  spinner (0 = unlimited) and double-click-to-grow-by-2 on any
+  `inputExt`/`outputExt` boundary port connector -- same interaction
+  shape as the RTL view's sibling feature above.
+  `netlist_query_show_gate_schematic()` restructured into a two-phase
+  create-window-then-refresh shape (`gate_refresh_schematic()`
+  extracted out), caching the resolved top_module/select_prefix (from
+  the testbench-vs-DUT auto-detection fallback) on first successful
+  render so a later depth change doesn't re-scan source files every
+  time. Verified via gdb against a live instance: depth 2/4/0 against
+  `cpu_top.alu_result`'s fan-in produced 14/47/459 nodes respectively
+  (3/19/- flagged as boundary ports), confirming both the hop limit and
+  boundary-port flagging work correctly; auto-detection from testbench
+  `tb` to DUT `cpu_top` (instance `tb.dut`) also confirmed still
+  working through the restructuring.
 
 ## Up next, in order
 
@@ -766,25 +788,28 @@ the conversation history for the full reasoning behind this ordering.
    one hop at a time on request, keep sub-modules as black boxes until
    explicitly asked to dissolve). Scoped and empirically validated this
    session (both load-bearing mechanisms confirmed working against the
-   real toy-CPU test design, not just read about):
-   - **"Start small"**: seed the diagram from a single-hop selection
-     (Yosys `select <signal> %ci`, immediate drivers only) instead of
-     today's full transitive `%ci*` cone. Confirmed: a 1-hop selection
-     around `alu_result` produced a 3-cell, 356x184px diagram (just the
-     `alu` instance, kept as one black box, with clean named ports) --
-     vs. today's always-render-everything ~450-cell, 5399x16100px cone.
-   - **"Expand"**: clicking a boundary port connector (an `inputExt`/
-     `outputExt` symbol, i.e. a cut wire) should pull in whatever's
-     immediately upstream/downstream of that specific net and re-render.
-     Mechanism: re-run Yosys with the growing set of previously-included
-     object names unioned with a fresh one-hop `%ci`/`%co` query seeded
-     from the clicked port's net name, then re-`submod`/re-render.
-     Yosys has no interactive/incremental session mode, so this means a
-     fresh Yosys invocation per expand-click (re-synthesizing from
-     source each time) rather than incrementally mutating a live
-     process -- confirmed fast enough for a modest design in this
-     session's own ad hoc testing (well under a second), but not
-     stress-tested against a large real design yet.
+   real toy-CPU test design, not just read about). The simple MVP of
+   "Start small"/"Expand" -- a global `%ci<N>` hop-count limit with a
+   depth spinner and double-click-to-grow-by-2 on any boundary port,
+   re-querying Yosys fresh each time rather than tracking per-net state
+   -- is now done (see Done section above). What's left is the richer,
+   per-net incremental model described below:
+   - **Per-net "Start small"/"Expand"**: rather than one global hop-count
+     limit, track the actual set of included Yosys object names
+     (`included_objects`, seeded with just the root signal) and grow it
+     one specific net at a time -- clicking a particular boundary port
+     pulls in only what's immediately upstream/downstream of *that* net
+     (a fresh one-hop `%ci`/`%co` query seeded from the clicked port's
+     net name, unioned into `included_objects`), rather than today's
+     "expand everything at the boundary by 2 more hops". Confirmed
+     during scoping: a 1-hop selection around `alu_result` produced a
+     3-cell, 356x184px diagram (just the `alu` instance, kept as one
+     black box, with clean named ports) vs. the always-render-everything
+     ~450-cell, 5399x16100px full cone -- and a fresh Yosys invocation
+     per expand-click (re-synthesizing from source each time, since
+     Yosys has no interactive/incremental session mode) was fast enough
+     in ad hoc testing (well under a second), though not stress-tested
+     against a large real design yet.
    - **"Dissolve"**: a sub-module instance (any Yosys cell whose type is
      a user module, not a `$_AND_`-style primitive) starts as a single
      black box -- confirmed: selecting a non-flattened module instance
