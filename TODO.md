@@ -903,6 +903,36 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   common case; a fully general fix would need to walk down through
   every intermediate pass-through instance, which needs port-
   connectivity information this fix doesn't have.
+- **"Show Cone of Logic" now opens the schematic diagram, not a flat
+  list.** It used to run the same fan-in query ("Show Schematic"
+  already used) through a text results-list window instead of a
+  diagram -- per direct feedback ("show cone of logic provides a list,
+  we should be showing a schematic"), repointed it at the diagram and
+  removed the now fully-redundant list code path (`QUERY_KIND_FANIN`,
+  `netlist_query_show_cone()`) rather than leave two buttons doing the
+  same thing. The surviving button keeps the "Show Cone of Logic"
+  label.
+- **Fixed a crash reading a multi-bit signal's value before its first
+  real sample** (`local_trace_asciival()` in `gw-mouseover.c`, the
+  backend behind the schematic view's live value annotation and the
+  signal-under-the-mouse popup) -- discovered as a direct consequence
+  of the fix above, since no multi-bit signal had ever successfully
+  reached this value-lookup code via the schematic view before
+  "Show Cone of Logic" started rendering real diagrams for bus
+  signals. Every loader bootstraps a node's history with a pre-dump
+  sentinel entry (time -1/-2) whose value is always a plain
+  `GW_BIT_X`-style byte, even for a multi-bit ("extvals") node -- no
+  real vector string ever gets allocated for it. The value-lookup code
+  didn't account for this, misreading that raw byte as a vector string
+  pointer and segfaulting whenever a queried time fell before a multi-
+  bit signal's first real transition (e.g. before reset deasserts).
+  `list_x_view.c`'s `scan_node_trace()` already had the correct guard
+  for this exact case -- applied the same check here. Verified live via
+  gdb with a real signal from the dump file's own symbol table (not a
+  fabricated trace, ruling out a test-harness artifact): reproduced the
+  crash, inspected the live `GwHistEnt` confirming the exact mechanism,
+  then confirmed the fix resolves it and the schematic renders correct
+  "= x" annotations for not-yet-driven signals.
 
 ## Up next, in order
 
