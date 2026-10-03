@@ -31,7 +31,11 @@ static void gate_refresh_schematic(GateSchematicState *state);
 static void gate_set_max_depth(GateSchematicState *state, guint new_depth);
 static void gate_expand_depth(GateSchematicState *state);
 static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data);
-static void gate_dissolve_instance(GateSchematicState *state, const gchar *instance_id);
+static void gate_dissolve_instances(GateSchematicState *state, const gchar *const *instance_ids,
+                                    guint n);
+static void gate_select_only(GateSchematicState *state, const gchar *id);
+static void gate_toggle_selected(GateSchematicState *state, const gchar *id);
+static void gate_show_context_menu(GateSchematicState *state, GdkEventButton *event);
 
 // Translates gtkwave's own dot-delimited hierarchical path (e.g.
 // "tb.dut.u_counter.count_q") into Yosys's `select` syntax
@@ -420,10 +424,14 @@ static void jump_to_gate_node_source(const gchar *href)
 // source. `flatten_clause` is either "" (nothing dissolved yet -- every
 // sub-module instance stays an opaque black-box cell) or a caller-built
 // `"flatten <obj> <obj> ...; "` fragment (see gate_refresh_schematic())
-// naming exactly the dissolved instances to inline. Caller owns
+// naming exactly the dissolved instances to inline. `filter_suffix` is
+// either "" (nothing filtered out) or a caller-built
+// `" <obj> ... %u ... %d"` fragment (see build_filter_suffix()) to
+// subtract specific objects back out of the selected cone. Caller owns
 // *out_dot_text (g_free).
 static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, guint max_depth,
-                          const gchar *flatten_clause, gchar **out_dot_text, GError **error)
+                          const gchar *flatten_clause, const gchar *filter_suffix,
+                          gchar **out_dot_text, GError **error)
 {
     gchar *dot_path = NULL;
     gint dot_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.dot", &dot_path, error);
@@ -462,11 +470,12 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
     }
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; %smemory_collect; opt; techmap; "
-                          "opt; select %s %s; show -format dot -prefix %s -notitle -href",
+                          "opt; select %s %s%s; show -format dot -prefix %s -notitle -href",
                           top_module,
                           flatten_clause,
                           select_expr,
                           hop_arg,
+                          filter_suffix,
                           prefix);
 
     gchar *yosys_bin = g_find_program_in_path("yosys");
@@ -592,12 +601,13 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
 // via Yosys's own `%ci<N>` selection operator (`%ci*` when unlimited) --
 // unlike the RTL schematic view's own depth limiting, no custom BFS is
 // needed here: Yosys's selection language already has hop-count-limited
-// fan-in built in. `flatten_clause` is either "" (nothing dissolved yet)
-// or a caller-built `"flatten <obj> <obj> ...; "` fragment -- see
+// fan-in built in. `flatten_clause` and `filter_suffix` are either ""
+// (nothing dissolved/filtered yet) or caller-built fragments -- see
 // run_yosys()'s own doc comment, and gate_refresh_schematic() for how
-// it's built from state->dissolved_instances.
+// they're built from state->dissolved_instances/state->filtered_out.
 static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr, guint max_depth,
-                               const gchar *flatten_clause, gchar **out_json_text, GError **error)
+                               const gchar *flatten_clause, const gchar *filter_suffix,
+                               gchar **out_json_text, GError **error)
 {
     gchar *json_path = NULL;
     gint json_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.json", &json_path, error);
@@ -622,12 +632,13 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
     }
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; %smemory_collect; opt; techmap; "
-                          "opt; select %s %s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
+                          "opt; select %s %s%s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
                           "select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
                           top_module,
                           flatten_clause,
                           select_expr,
                           hop_arg,
+                          filter_suffix,
                           prefix);
 
     gchar *yosys_bin = g_find_program_in_path("yosys");
@@ -1198,12 +1209,30 @@ struct GateSchematicState
     GPtrArray *dissolved_instances; /* owned gchar*, each a `flatten`-ready
                                      Yosys object name (e.g.
                                      "cpu_top/u_rf") for a sub-module
-                                     instance the user has double-clicked
-                                     to dissolve -- empty (NULL) until the
+                                     instance the user has dissolved (via
+                                     double-click or the right-click
+                                     menu's "Dissolve") -- NULL until the
                                      first dissolve. Persists for the life
-                                     of the window; grows one instance at a
-                                     time, never shrinks (no "re-collapse"
-                                     gesture yet). */
+                                     of the window; a right-click menu's
+                                     "Collapse" entry can remove an entry
+                                     again (gate_collapse_instance()). */
+    GPtrArray *filtered_out; /* owned gchar*, each a Yosys object name the
+                              right-click menu's "Filter Out" action has
+                              subtracted from the shown cone (see
+                              build_filter_suffix()) -- NULL until the
+                              first filter. Persists for the life of the
+                              window; grows only (no un-filter gesture
+                              yet, unlike dissolve's collapse). */
+    GHashTable *selected_ids; /* set (id -> NULL, owned keys) of
+                               GateNodeInfo::id values currently selected
+                               via plain/shift-click -- drives both the
+                               highlight overlay (on_gate_image_draw_
+                               after()) and what a right-click's context
+                               menu operates on (gate_show_context_
+                               menu()). Cleared on every successful
+                               re-render, since a stale render's ids may
+                               not mean anything (or may not exist) in a
+                               new one. */
     gdouble zoom;
 };
 
@@ -1218,6 +1247,12 @@ static void gate_schematic_state_free(gpointer data)
     }
     if (state->dissolved_instances != NULL) {
         g_ptr_array_unref(state->dissolved_instances);
+    }
+    if (state->filtered_out != NULL) {
+        g_ptr_array_unref(state->filtered_out);
+    }
+    if (state->selected_ids != NULL) {
+        g_hash_table_unref(state->selected_ids);
     }
     g_free(state->signal_path);
     g_free(state->top_module);
@@ -1340,30 +1375,316 @@ static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data
     gate_refresh_schematic(state);
 }
 
-// Double-clicking an un-dissolved sub-module instance (see GateNodeInfo's
-// own comment) adds it to state->dissolved_instances -- as
+// Dissolving (double-click, or the right-click menu's "Dissolve") adds
+// each of `instance_ids` (n entries, each a clicked/selected node's own
+// GateNodeInfo::id, e.g. "u_alu") to state->dissolved_instances -- as
 // "<top_module>/<instance_id>", exactly the Yosys object name
-// build_flatten_clause() needs -- and re-renders, which pulls its
-// internals into view (and may introduce fresh boundary ports/further
-// dissolvable instances around what used to be its black-box edge, per
-// TODO.md's "Dissolve" design). Grows only; no "re-collapse" gesture yet.
-// `instance_id` is the clicked node's own GateNodeInfo::id, e.g. "u_alu".
-static void gate_dissolve_instance(GateSchematicState *state, const gchar *instance_id)
+// build_flatten_clause() needs -- and re-renders once for the whole
+// batch, which pulls their internals into view (and may introduce fresh
+// boundary ports/further dissolvable instances around what used to be
+// their black-box edges, per TODO.md's "Dissolve" design). Silently
+// skips an id already dissolved. See gate_collapse_instance() for the
+// inverse.
+static void gate_dissolve_instances(GateSchematicState *state, const gchar *const *instance_ids,
+                                    guint n)
 {
     if (state->dissolved_instances == NULL) {
         state->dissolved_instances = g_ptr_array_new_with_free_func(g_free);
     }
 
-    gchar *selector = g_strconcat(state->top_module, "/", instance_id, NULL);
+    gboolean added_any = FALSE;
+    for (guint i = 0; i < n; i++) {
+        gchar *selector = g_strconcat(state->top_module, "/", instance_ids[i], NULL);
+        gboolean already = FALSE;
+        for (guint j = 0; j < state->dissolved_instances->len; j++) {
+            if (g_str_equal(g_ptr_array_index(state->dissolved_instances, j), selector)) {
+                already = TRUE;
+                break;
+            }
+        }
+        if (already) {
+            g_free(selector);
+            continue;
+        }
+        g_ptr_array_add(state->dissolved_instances, selector); /* adopts selector */
+        added_any = TRUE;
+    }
+
+    if (added_any) {
+        gate_refresh_schematic(state);
+    }
+}
+
+// Inverse of gate_dissolve_instances(): removes `selector` (exactly as
+// stored in state->dissolved_instances, i.e. "<top_module>/<instance>")
+// so that instance goes back to being a single black-box symbol. Used by
+// the right-click menu's per-instance "Collapse" entries (see
+// gate_show_context_menu()) -- there's no click target left to
+// double-click once an instance is dissolved (its internals are now
+// just ordinary gate nodes, indistinguishable from any other), so
+// collapsing is menu-only, not a gesture on the diagram itself.
+static void gate_collapse_instance(GateSchematicState *state, const gchar *selector)
+{
+    if (state->dissolved_instances == NULL) {
+        return;
+    }
     for (guint i = 0; i < state->dissolved_instances->len; i++) {
         if (g_str_equal(g_ptr_array_index(state->dissolved_instances, i), selector)) {
-            g_free(selector); /* already dissolved -- nothing to do */
+            g_ptr_array_remove_index(state->dissolved_instances, i);
+            gate_refresh_schematic(state);
             return;
         }
     }
-    g_ptr_array_add(state->dissolved_instances, selector); /* adopts selector */
+}
 
-    gate_refresh_schematic(state);
+// The right-click menu's "Filter Out" action: removes each of `ids` (n
+// entries, each a selected node's own GateNodeInfo::id) from the shown
+// cone, via build_filter_suffix() subtracting them from the fan-in
+// selection before submod/show runs. Boundary port connectors are never
+// passed in here (see gate_show_context_menu()): cutting one doesn't
+// shrink anything -- it's already the cone's edge at the current depth
+// -- it would just orphan a dangling reference. Silently skips an id
+// already filtered. No un-filter gesture yet (unlike dissolve's
+// collapse) -- a known, not-yet-designed gap.
+static void gate_filter_objects(GateSchematicState *state, const gchar *const *ids, guint n)
+{
+    if (state->filtered_out == NULL) {
+        state->filtered_out = g_ptr_array_new_with_free_func(g_free);
+    }
+
+    gboolean added_any = FALSE;
+    for (guint i = 0; i < n; i++) {
+        gchar *selector = g_strconcat(state->top_module, "/", ids[i], NULL);
+        gboolean already = FALSE;
+        for (guint j = 0; j < state->filtered_out->len; j++) {
+            if (g_str_equal(g_ptr_array_index(state->filtered_out, j), selector)) {
+                already = TRUE;
+                break;
+            }
+        }
+        if (already) {
+            g_free(selector);
+            continue;
+        }
+        g_ptr_array_add(state->filtered_out, selector); /* adopts selector */
+        added_any = TRUE;
+    }
+
+    if (added_any) {
+        gate_refresh_schematic(state);
+    }
+}
+
+// Replaces the current selection with just `id` (or clears it if `id`
+// is NULL) -- a plain click, or a right-click landing on a node that
+// wasn't already part of a multi-selection (standard "right-click
+// selects under cursor first" convention, see on_gate_image_button_
+// press()). Queues a redraw so the highlight overlay
+// (on_gate_image_draw_after()) picks up the change.
+static void gate_select_only(GateSchematicState *state, const gchar *id)
+{
+    if (state->selected_ids == NULL) {
+        state->selected_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    }
+    g_hash_table_remove_all(state->selected_ids);
+    if (id != NULL) {
+        g_hash_table_insert(state->selected_ids, g_strdup(id), NULL);
+    }
+    gtk_widget_queue_draw(state->image);
+}
+
+// Shift-click: adds `id` to the current selection, or removes it if
+// already selected -- lets several components be picked for one batch
+// Dissolve/Filter Out action via the right-click menu.
+static void gate_toggle_selected(GateSchematicState *state, const gchar *id)
+{
+    if (state->selected_ids == NULL) {
+        state->selected_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    }
+    if (g_hash_table_contains(state->selected_ids, id)) {
+        g_hash_table_remove(state->selected_ids, id);
+    } else {
+        g_hash_table_insert(state->selected_ids, g_strdup(id), NULL);
+    }
+    gtk_widget_queue_draw(state->image);
+}
+
+// Draws a highlight rectangle around every currently-selected node.
+// Connected "after" the event box's own "draw" handler (see
+// netlist_query_show_gate_schematic()) so the default handler draws the
+// schematic image first (via gtk_container_propagate_draw() to the
+// GtkImage child) and this then paints on top of it, in the same cairo
+// context/coordinate space.
+static gboolean on_gate_image_draw_after(GtkWidget *widget, cairo_t *cr, gpointer user_data)
+{
+    (void)widget;
+    GateSchematicState *state = user_data;
+    if (state->selected_ids == NULL || g_hash_table_size(state->selected_ids) == 0 ||
+        state->nodes == NULL) {
+        return FALSE;
+    }
+
+    gdouble zoom = state->zoom != 0.0 ? state->zoom : 1.0;
+    cairo_save(cr);
+    cairo_set_source_rgb(cr, 0.12, 0.55, 1.0);
+    cairo_set_line_width(cr, 2.0);
+    for (guint i = 0; i < state->nodes->len; i++) {
+        GateNodeInfo *n = g_ptr_array_index(state->nodes, i);
+        if (g_hash_table_contains(state->selected_ids, n->id)) {
+            cairo_rectangle(cr, n->x * zoom - 2, n->y * zoom - 2, n->w * zoom + 4,
+                           n->h * zoom + 4);
+            cairo_stroke(cr);
+        }
+    }
+    cairo_restore(cr);
+    return FALSE;
+}
+
+// The three "activate" handlers below read `state` back off the menu
+// item itself (attached as plain object data, borrowed -- the window/
+// state outlives any one popup menu) and their actual payload (an ids
+// array, or a single selector string) from the signal's own user_data,
+// exactly like show_node_context_menu() in schematic_view.c does for its
+// own (simpler, single-string) menu items.
+static void on_gate_menu_dissolve_activate(GtkMenuItem *item, gpointer user_data)
+{
+    GateSchematicState *state = g_object_get_data(G_OBJECT(item), "gate-schematic-state");
+    GPtrArray *ids = user_data;
+    gate_dissolve_instances(state, (const gchar *const *)ids->pdata, ids->len);
+}
+
+static void on_gate_menu_filter_activate(GtkMenuItem *item, gpointer user_data)
+{
+    GateSchematicState *state = g_object_get_data(G_OBJECT(item), "gate-schematic-state");
+    GPtrArray *ids = user_data;
+    gate_filter_objects(state, (const gchar *const *)ids->pdata, ids->len);
+}
+
+static void on_gate_menu_collapse_activate(GtkMenuItem *item, gpointer user_data)
+{
+    GateSchematicState *state = g_object_get_data(G_OBJECT(item), "gate-schematic-state");
+    gchar *selector = user_data;
+    gate_collapse_instance(state, selector);
+}
+
+// Builds and pops up the right-click context menu: "Dissolve" for any
+// selected un-dissolved module instances (batched, see gate_dissolve_
+// instances()), "Filter Out" for any selected non-boundary-port objects
+// (gate_filter_objects()), and always one "Collapse" entry per already-
+// dissolved instance (gate_collapse_instance()) regardless of the
+// current selection, since collapsing isn't a click-target-driven
+// action -- there's nothing left on the diagram that still represents
+// "this dissolved instance" as a single clickable thing. Shows a single
+// insensitive placeholder item if there's nothing to offer at all.
+static void gate_show_context_menu(GateSchematicState *state, GdkEventButton *event)
+{
+    GtkWidget *menu = gtk_menu_new();
+    gboolean any_items = FALSE;
+
+    GPtrArray *instance_ids = g_ptr_array_new_with_free_func(g_free);
+    GPtrArray *filterable_ids = g_ptr_array_new_with_free_func(g_free);
+    guint boundary_count = 0;
+
+    if (state->selected_ids != NULL && state->nodes != NULL) {
+        for (guint i = 0; i < state->nodes->len; i++) {
+            GateNodeInfo *n = g_ptr_array_index(state->nodes, i);
+            if (!g_hash_table_contains(state->selected_ids, n->id)) {
+                continue;
+            }
+            if (n->is_boundary_port) {
+                boundary_count++;
+                continue;
+            }
+            g_ptr_array_add(filterable_ids, g_strdup(n->id));
+            if (n->is_module_instance) {
+                g_ptr_array_add(instance_ids, g_strdup(n->id));
+            }
+        }
+    }
+
+    if (instance_ids->len > 0) {
+        gchar *label = instance_ids->len == 1
+                          ? g_strdup_printf("Dissolve \"%s\"",
+                                            (const gchar *)g_ptr_array_index(instance_ids, 0))
+                          : g_strdup_printf("Dissolve %u Instances", instance_ids->len);
+        GtkWidget *item = gtk_menu_item_new_with_label(label);
+        g_free(label);
+
+        g_object_set_data(G_OBJECT(item), "gate-schematic-state", state);
+        g_signal_connect_data(item,
+                              "activate",
+                              G_CALLBACK(on_gate_menu_dissolve_activate),
+                              instance_ids,
+                              (GClosureNotify)(GDestroyNotify)g_ptr_array_unref,
+                              (GConnectFlags)0);
+
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        any_items = TRUE;
+    } else {
+        g_ptr_array_unref(instance_ids);
+    }
+
+    if (filterable_ids->len > 0) {
+        gchar *label = filterable_ids->len == 1
+                          ? g_strdup_printf("Filter Out \"%s\"",
+                                            (const gchar *)g_ptr_array_index(filterable_ids, 0))
+                          : g_strdup_printf("Filter Out %u Objects", filterable_ids->len);
+        GtkWidget *item = gtk_menu_item_new_with_label(label);
+        g_free(label);
+
+        g_object_set_data(G_OBJECT(item), "gate-schematic-state", state);
+        g_signal_connect_data(item,
+                              "activate",
+                              G_CALLBACK(on_gate_menu_filter_activate),
+                              filterable_ids,
+                              (GClosureNotify)(GDestroyNotify)g_ptr_array_unref,
+                              (GConnectFlags)0);
+
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        any_items = TRUE;
+    } else {
+        g_ptr_array_unref(filterable_ids);
+    }
+
+    if (boundary_count > 0 && !any_items) {
+        GtkWidget *item =
+            gtk_menu_item_new_with_label("Boundary ports can't be filtered or dissolved");
+        gtk_widget_set_sensitive(item, FALSE);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        any_items = TRUE;
+    }
+
+    if (state->dissolved_instances != NULL && state->dissolved_instances->len > 0) {
+        if (any_items) {
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        }
+        for (guint i = 0; i < state->dissolved_instances->len; i++) {
+            const gchar *selector = g_ptr_array_index(state->dissolved_instances, i);
+            gchar *label = g_strdup_printf("Collapse \"%s\"", selector);
+            GtkWidget *item = gtk_menu_item_new_with_label(label);
+            g_free(label);
+
+            g_object_set_data(G_OBJECT(item), "gate-schematic-state", state);
+            g_signal_connect_data(item,
+                                  "activate",
+                                  G_CALLBACK(on_gate_menu_collapse_activate),
+                                  g_strdup(selector),
+                                  (GClosureNotify)(GDestroyNotify)g_free,
+                                  (GConnectFlags)0);
+
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        }
+        any_items = TRUE;
+    }
+
+    if (!any_items) {
+        GtkWidget *item = gtk_menu_item_new_with_label("(Right-click a component to see options)");
+        gtk_widget_set_sensitive(item, FALSE);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+
+    gtk_widget_show_all(menu);
+    gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
 }
 
 // Standard image-viewer/IDE scroll-wheel convention: plain wheel scrolls
@@ -1499,37 +1820,59 @@ static void on_gate_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAlloca
 
 // Hit-tests the click against this render's node boxes (built from
 // -Tplain or netlistsvg's own SVG, see parse_gate_plain_nodes()/
-// parse_netlistsvg_cell_nodes()). Click semantics are three-way, per
-// TODO.md's Cone Window plan: single-click on a plain internal gate/cell
-// jumps the source cross-probe panel to its HDL source location, if
-// Yosys could attribute one; single-click on a boundary port connector
-// or an un-dissolved sub-module instance does the same (an instance's
-// `src` is its instantiation statement) but also hints at the
-// double-click gesture available on it; double-click on a boundary port
-// connector expands the depth limit (gate_expand_depth()); double-click
-// on an un-dissolved instance dissolves it instead (gate_dissolve_
-// instance()), pulling its internals into view. No right-click/context-
-// menu/Add to Waveform yet -- unlike the RTL schematic view, there's no
-// gtkwave signal path to drive those with (Yosys's post-techmap names
-// don't map back to the original RTL signal names, see this file's own
-// header comment). Dot-fallback note: is_module_instance is never set
-// on that path (parse_gate_plain_nodes() doesn't extract cell types), so
-// without netlistsvg installed, a sub-module instance currently behaves
-// like a plain gate (click-to-source only, no dissolve gesture) -- a
-// known, narrower gap than the netlistsvg path, not a regression.
+// parse_netlistsvg_cell_nodes()). Click semantics, per TODO.md's Cone
+// Window plan:
+//   - Plain left-click: selects just this node (gate_select_only(),
+//     drives the highlight overlay) and ALSO does the existing
+//     informational action -- jump to HDL source if Yosys attributed
+//     one (an un-dissolved instance's own `src` is its instantiation
+//     statement), or a hint for a boundary port/instance/unattributed
+//     element.
+//   - Shift+left-click: toggles this node in/out of the selection
+//     (gate_toggle_selected()) without navigating anywhere -- lets
+//     several components be picked for one batch right-click action.
+//   - Double-click: boundary port -> expand the depth limit
+//     (gate_expand_depth()); un-dissolved instance -> dissolve it
+//     (gate_dissolve_instances(), n=1) -- both unchanged, fast single-
+//     target shortcuts that don't need the selection/menu machinery.
+//   - Right-click: if the clicked node isn't already part of the
+//     selection, replaces the selection with just it first (standard
+//     "right-click selects under cursor" convention); then always pops
+//     up the context menu (gate_show_context_menu()), even over empty
+//     canvas (to offer "Collapse" on already-dissolved instances, which
+//     isn't tied to any click target).
+// Dot-fallback note: is_module_instance is never set on that path
+// (parse_gate_plain_nodes() doesn't extract cell types), so without
+// netlistsvg installed, a sub-module instance currently behaves like a
+// plain gate (click-to-source only, no dissolve/filter) -- a known,
+// narrower gap than the netlistsvg path, not a regression.
 static gboolean
 on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
     (void)widget;
     GateSchematicState *state = user_data;
 
-    if (event->button != 1 ||
+    if ((event->button != 1 && event->button != 3) ||
         (event->type != GDK_BUTTON_PRESS && event->type != GDK_2BUTTON_PRESS)) {
         return FALSE;
     }
 
     gdouble zoom = state->zoom != 0.0 ? state->zoom : 1.0;
     GateNodeInfo *node = find_gate_node_at(state->nodes, event->x / zoom, event->y / zoom);
+
+    if (event->button == 3) {
+        if (event->type != GDK_BUTTON_PRESS) {
+            return FALSE; /* no double-right-click gesture */
+        }
+        if (node != NULL &&
+            (state->selected_ids == NULL || !g_hash_table_contains(state->selected_ids, node->id))) {
+            gate_select_only(state, node->id);
+        }
+        gate_show_context_menu(state, event);
+        return TRUE;
+    }
+
+    /* event->button == 1 from here on */
     if (node == NULL) {
         return FALSE;
     }
@@ -1538,7 +1881,8 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
         if (node->is_boundary_port) {
             gate_expand_depth(state);
         } else if (node->is_module_instance) {
-            gate_dissolve_instance(state, node->id);
+            const gchar *id = node->id;
+            gate_dissolve_instances(state, &id, 1);
         } else {
             status_text("GTKWAVE | Double-click only expands a boundary port or dissolves a "
                        "sub-module instance.\n");
@@ -1546,12 +1890,19 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
         return TRUE;
     }
 
+    if (event->state & GDK_SHIFT_MASK) {
+        gate_toggle_selected(state, node->id);
+        return TRUE;
+    }
+
+    gate_select_only(state, node->id);
+
     if (node->is_boundary_port) {
         status_text("GTKWAVE | Boundary port -- double-click to show more upstream.\n");
     } else if (node->is_module_instance && node->href != NULL) {
         jump_to_gate_node_source(node->href);
-        status_text("GTKWAVE | Sub-module instance -- double-click to dissolve into its "
-                   "internal gates.\n");
+        status_text("GTKWAVE | Sub-module instance -- double-click or right-click to dissolve "
+                   "into its internal gates.\n");
     } else if (node->href != NULL) {
         jump_to_gate_node_source(node->href);
     } else {
@@ -1582,6 +1933,37 @@ static gchar *build_flatten_clause(GateSchematicState *state)
     return g_string_free(clause, FALSE);
 }
 
+// Builds the trailing `" <obj> <obj> ... %u %u ... %d"` fragment that,
+// appended right after a `select <cone-expr>` command's own terms,
+// subtracts every object in state->filtered_out from the already-
+// selected cone before submod/show carves/draws it. Yosys's select
+// stack machine unions everything left on the stack once the command
+// ends, so N filtered objects need (N-1) `%u` to fold them into one set
+// before a final `%d` pops that set and subtracts it from the cone --
+// confirmed directly against a real Yosys run: a single trailing object
+// plus `%d` does subtract it correctly, but two objects just pushed
+// one after another ahead of one `%d` does NOT subtract either of them
+// from the cone (`%d` only consumes the top two stack entries, leaving
+// the full original cone selection untouched further down the stack to
+// be re-unioned back in at the end). Returns "" if nothing's filtered.
+static gchar *build_filter_suffix(GateSchematicState *state)
+{
+    if (state->filtered_out == NULL || state->filtered_out->len == 0) {
+        return g_strdup("");
+    }
+
+    GString *suffix = g_string_new("");
+    for (guint i = 0; i < state->filtered_out->len; i++) {
+        g_string_append_c(suffix, ' ');
+        g_string_append(suffix, (const gchar *)g_ptr_array_index(state->filtered_out, i));
+    }
+    for (guint i = 1; i < state->filtered_out->len; i++) {
+        g_string_append(suffix, " %u");
+    }
+    g_string_append(suffix, " %d");
+    return g_string_free(suffix, FALSE);
+}
+
 // Re-queries Yosys for state->signal_path's fan-in cone at the current
 // state->max_depth (via `%ci<N>`/`%ci*`, see run_yosys()/run_yosys_json())
 // and re-renders it. The testbench-vs-real-DUT auto-detection fallback
@@ -1609,24 +1991,27 @@ static void gate_refresh_schematic(GateSchematicState *state)
     gchar *dot_text = NULL; /* used only when !use_netlistsvg */
     gchar *json_text = NULL; /* used only when use_netlistsvg */
     gchar *flatten_clause = build_flatten_clause(state);
+    gchar *filter_suffix = build_filter_suffix(state);
     gboolean ok;
 
     if (state->top_module != NULL) {
         gchar *select_expr =
             make_yosys_select(state->top_module, state->select_prefix, state->signal_path);
-        ok = use_netlistsvg ? run_yosys_json(state->top_module, select_expr, state->max_depth,
-                                             flatten_clause, &json_text, &error)
-                           : run_yosys(state->top_module, select_expr, state->max_depth,
-                                       flatten_clause, &dot_text, &error);
+        ok = use_netlistsvg
+                 ? run_yosys_json(state->top_module, select_expr, state->max_depth, flatten_clause,
+                                  filter_suffix, &json_text, &error)
+                 : run_yosys(state->top_module, select_expr, state->max_depth, flatten_clause,
+                             filter_suffix, &dot_text, &error);
         g_free(select_expr);
     } else {
         const gchar *top_module = GLOBALS->netlist_top_module;
         gchar *select_expr = make_yosys_select(top_module, top_module, state->signal_path);
 
-        ok = use_netlistsvg ? run_yosys_json(top_module, select_expr, state->max_depth,
-                                             flatten_clause, &json_text, &error)
-                           : run_yosys(top_module, select_expr, state->max_depth, flatten_clause,
-                                       &dot_text, &error);
+        ok = use_netlistsvg
+                 ? run_yosys_json(top_module, select_expr, state->max_depth, flatten_clause,
+                                  filter_suffix, &json_text, &error)
+                 : run_yosys(top_module, select_expr, state->max_depth, flatten_clause,
+                             filter_suffix, &dot_text, &error);
         g_free(select_expr);
 
         // The configured top is very often the VCD's own dump-root scope
@@ -1647,12 +2032,11 @@ static void gate_refresh_schematic(GateSchematicState *state)
                 gchar *retry_select =
                     make_yosys_select(detected_module_type, instance_prefix, state->signal_path);
 
-                ok = use_netlistsvg ? run_yosys_json(detected_module_type, retry_select,
-                                                     state->max_depth, flatten_clause,
-                                                     &json_text, &error)
-                                   : run_yosys(detected_module_type, retry_select,
-                                               state->max_depth, flatten_clause, &dot_text,
-                                               &error);
+                ok = use_netlistsvg
+                         ? run_yosys_json(detected_module_type, retry_select, state->max_depth,
+                                          flatten_clause, filter_suffix, &json_text, &error)
+                         : run_yosys(detected_module_type, retry_select, state->max_depth,
+                                     flatten_clause, filter_suffix, &dot_text, &error);
                 g_free(retry_select);
 
                 if (ok) {
@@ -1685,6 +2069,7 @@ static void gate_refresh_schematic(GateSchematicState *state)
     }
 
     g_free(flatten_clause);
+    g_free(filter_suffix);
 
     if (!ok) {
         gchar *msg = g_strdup_printf("GTKWAVE | Gate-level schematic failed for '%s': %s\n",
@@ -1808,6 +2193,15 @@ static void gate_refresh_schematic(GateSchematicState *state)
         g_ptr_array_unref(state->nodes);
     }
     state->nodes = nodes;
+
+    // A stale render's selected ids may not mean anything in this new
+    // one (or may not exist at all) -- rather than risk highlighting the
+    // wrong thing, just drop the selection every time the picture
+    // actually changes underneath it.
+    if (state->selected_ids != NULL) {
+        g_hash_table_remove_all(state->selected_ids);
+    }
+    gtk_widget_queue_draw(state->image);
 }
 
 void netlist_query_show_gate_schematic(const char *signal_path)
@@ -1898,6 +2292,7 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     gtk_widget_add_events(event_box, GDK_BUTTON_PRESS_MASK);
     g_signal_connect(event_box, "button-press-event", G_CALLBACK(on_gate_image_button_press),
                      state);
+    g_signal_connect_after(event_box, "draw", G_CALLBACK(on_gate_image_draw_after), state);
 
     g_signal_connect(depth_spin, "value-changed", G_CALLBACK(on_gate_depth_spin_changed), state);
     g_signal_connect(zoom_in_button, "clicked", G_CALLBACK(on_gate_zoom_in_clicked), state);
