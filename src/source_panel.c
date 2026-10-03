@@ -393,6 +393,55 @@ static void refresh_file_combo(const char *current_path)
     g_signal_handlers_unblock_by_func(GLOBALS->source_file_combo, on_file_combo_changed, NULL);
 }
 
+// GtkTextView's own built-in double-click word-selection (internally
+// Pango's word-break segmentation of the line) treats '_' as a boundary,
+// splitting an identifier like "my_signal_name" into separate words on
+// double-click -- a long-standing GTK/Pango default (reported against
+// other GTK text-editing apps too for the same reason), not anything
+// this file configures. Overridden here for word granularity only, using
+// the identical identifier character class already used for syntax
+// highlighting/signal-name matching elsewhere in this file (see the
+// `ident_re` regex above it): `[A-Za-z0-9_]`. Returns FALSE for any other
+// granularity (e.g. triple-click's GTK_TEXT_EXTEND_SELECTION_LINE) so
+// GTK's own default handling runs unchanged there.
+static gboolean on_source_extend_selection(GtkTextView *text_view,
+                                          GtkTextExtendSelection granularity,
+                                          GtkTextIter *location,
+                                          GtkTextIter *start,
+                                          GtkTextIter *end,
+                                          gpointer user_data)
+{
+    (void)text_view;
+    (void)user_data;
+
+    if (granularity != GTK_TEXT_EXTEND_SELECTION_WORD) {
+        return FALSE;
+    }
+
+    *start = *location;
+    *end = *location;
+
+    while (!gtk_text_iter_starts_line(start)) {
+        GtkTextIter prev = *start;
+        gtk_text_iter_backward_char(&prev);
+        gunichar ch = gtk_text_iter_get_char(&prev);
+        if (!g_unichar_isalnum(ch) && ch != '_') {
+            break;
+        }
+        *start = prev;
+    }
+
+    while (!gtk_text_iter_ends_line(end)) {
+        gunichar ch = gtk_text_iter_get_char(end);
+        if (!g_unichar_isalnum(ch) && ch != '_') {
+            break;
+        }
+        gtk_text_iter_forward_char(end);
+    }
+
+    return TRUE;
+}
+
 GtkWidget *create_source_panel(void)
 {
     GLOBALS->source_file_combo = gtk_combo_box_text_new();
@@ -420,6 +469,7 @@ GtkWidget *create_source_panel(void)
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(text), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text), GTK_WRAP_NONE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(text), TRUE);
+    g_signal_connect(text, "extend-selection", G_CALLBACK(on_source_extend_selection), NULL);
 
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text));
     GLOBALS->source_highlight_tag = gtk_text_buffer_create_tag(buffer,
