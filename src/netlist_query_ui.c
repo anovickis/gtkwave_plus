@@ -440,7 +440,6 @@ typedef enum
 {
     QUERY_KIND_DRIVERS,
     QUERY_KIND_LOADS,
-    QUERY_KIND_FANIN,
 } QueryKind;
 
 static const gchar *query_kind_noun(QueryKind kind)
@@ -450,8 +449,6 @@ static const gchar *query_kind_noun(QueryKind kind)
         return "Drivers";
     case QUERY_KIND_LOADS:
         return "Loads";
-    case QUERY_KIND_FANIN:
-        return "Cone of Logic";
     default:
         g_assert_not_reached();
     }
@@ -491,8 +488,6 @@ static GPtrArray *run_one_query(GwNetlistQuery *query, QueryKind kind, const gch
         return gw_netlist_query_get_drivers(query, signal_path, error);
     case QUERY_KIND_LOADS:
         return gw_netlist_query_get_loads_limited(query, signal_path, limits, error);
-    case QUERY_KIND_FANIN:
-        return gw_netlist_query_get_fanin_limited(query, signal_path, limits, error);
     default:
         g_assert_not_reached();
     }
@@ -662,12 +657,12 @@ static void run_query_and_show(const gchar *signal_path, QueryKind kind)
     state->kind = kind;
     state->listbox = listbox;
 
-    // The fan-in/fan-out queries have no built-in bound and can return
-    // very large result sets on a real design -- give the depth/module-
-    // boundary limits a visible control here rather than a silent
-    // default. Drivers are already naturally single-level; no controls
-    // needed (and nothing to filter on -- driver edges carry no `path`).
-    if (kind == QUERY_KIND_LOADS || kind == QUERY_KIND_FANIN) {
+    // The fan-out query has no built-in bound and can return very large
+    // result sets on a real design -- give the depth/module-boundary
+    // limits a visible control here rather than a silent default.
+    // Drivers are already naturally single-level; no controls needed
+    // (and nothing to filter on -- driver edges carry no `path`).
+    if (kind == QUERY_KIND_LOADS) {
         GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         gtk_container_set_border_width(GTK_CONTAINER(controls), 4);
 
@@ -711,9 +706,4 @@ void netlist_query_show_drivers(const char *signal_path)
 void netlist_query_show_loads(const char *signal_path)
 {
     run_query_and_show(signal_path, QUERY_KIND_LOADS);
-}
-
-void netlist_query_show_cone(const char *signal_path)
-{
-    run_query_and_show(signal_path, QUERY_KIND_FANIN);
 }

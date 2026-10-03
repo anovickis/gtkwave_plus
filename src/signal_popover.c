@@ -230,27 +230,13 @@ static void on_show_loads_clicked(GtkButton *button, gpointer user_data)
     g_free(signal_path);
 }
 
-static void on_show_cone_clicked(GtkButton *button, gpointer user_data)
-{
-    GwTrace *t = find_target_trace();
-    close_ancestor_popover(GTK_WIDGET(button));
-
-    if (t == NULL) {
-        status_text("GTKWAVE | Select a signal first to show its cone of logic.\n");
-        return;
-    }
-    gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
-    netlist_query_show_cone(signal_path);
-    g_free(signal_path);
-}
-
 static void on_show_schematic_clicked(GtkButton *button, gpointer user_data)
 {
     GwTrace *t = find_target_trace();
     close_ancestor_popover(GTK_WIDGET(button));
 
     if (t == NULL) {
-        status_text("GTKWAVE | Select a signal first to show its schematic.\n");
+        status_text("GTKWAVE | Select a signal first to show its cone of logic.\n");
         return;
     }
     gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
@@ -402,11 +388,12 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     g_signal_connect(loads_button, "clicked", G_CALLBACK(on_show_loads_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), loads_button, TRUE, TRUE, 0);
 
-    GtkWidget *cone_button = gtk_button_new_with_label("Show Cone of Logic");
-    g_signal_connect(cone_button, "clicked", G_CALLBACK(on_show_cone_clicked), range_entry);
-    gtk_box_pack_start(GTK_BOX(netlist_box), cone_button, TRUE, TRUE, 0);
-
-    GtkWidget *schematic_button = gtk_button_new_with_label("Show Schematic");
+    // "Show Cone of Logic" -- a visual rendering of the signal's fan-in
+    // cone (gw_netlist_query_get_cone_dot(), same query a flat
+    // driver/load edge list would use), not a results list: a results-
+    // list version of this existed earlier and was removed as pure UI
+    // duplication once this button was pointed at the diagram instead.
+    GtkWidget *schematic_button = gtk_button_new_with_label("Show Cone of Logic");
     g_signal_connect(
         schematic_button, "clicked", G_CALLBACK(on_show_schematic_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), schematic_button, TRUE, TRUE, 0);

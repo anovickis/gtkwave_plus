@@ -16,10 +16,6 @@ void netlist_query_show_drivers(const char *signal_path);
 // Same contract, showing the combinational fan-out (loads) instead.
 void netlist_query_show_loads(const char *signal_path);
 
-// Same contract, showing the transitive combinational fan-in cone (the
-// "cone of logic") instead.
-void netlist_query_show_cone(const char *signal_path);
-
 // Shared with schematic_view.c: prompts for the design's HDL source files +
 // top module if not already configured (GLOBALS->netlist_source_files/
 // netlist_top_module), same one-per-session flow the *_show_* functions
