@@ -22,6 +22,16 @@
 // `dot -Tpng` at a fixed -Gdpi is exact by construction.
 #define GATE_SCHEMATIC_DPI 96.0
 
+// Forward declarations: GateSchematicState itself isn't defined until
+// much further down (it needs GateNodeInfo/helper types first), but the
+// depth-control functions below need to be callable from the click
+// handler, which is defined before all of that.
+typedef struct GateSchematicState GateSchematicState;
+static void gate_refresh_schematic(GateSchematicState *state);
+static void gate_set_max_depth(GateSchematicState *state, guint new_depth);
+static void gate_expand_depth(GateSchematicState *state);
+static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data);
+
 // Translates gtkwave's own dot-delimited hierarchical path (e.g.
 // "tb.dut.u_counter.count_q") into Yosys's `select` syntax
 // ("<top-module>/<relative.path>", e.g. "top/u_counter.count_q"). Usually
@@ -258,6 +268,13 @@ typedef struct
 {
     gchar *id; /* Graphviz node id, e.g. "n1" or "c15" */
     gchar *href; /* "path:line.col-line.col", or NULL */
+    gboolean is_boundary_port; /* TRUE for an inputExt/outputExt connector --
+                                a cut wire at the current depth limit's edge
+                                (or a genuine top-level design port, which
+                                looks identical and just won't have anywhere
+                                further to expand). Double-clicking one grows
+                                the depth limit instead of the click-to-source
+                                behavior an internal gate gets. */
     gdouble x, y, w, h; /* pixel-space, top-left corner + size */
 } GateNodeInfo;
 
@@ -386,7 +403,7 @@ static void jump_to_gate_node_source(const gchar *href)
 // `-href`) -- used both for click-to-source (see jump_to_gate_node_source())
 // and, after inject_ortho_splines() touches it up, as the final render
 // source. Caller owns *out_dot_text (g_free).
-static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
+static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, guint max_depth,
                           gchar **out_dot_text, GError **error)
 {
     gchar *dot_path = NULL;
@@ -412,6 +429,13 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
     // modules actually reachable from the configured top, so a sibling
     // testbench module that merely happens to sit in the same source
     // file list never gets compiled (and never hit) at all.
+    gchar hop_arg[16];
+    if (max_depth > 0) {
+        g_snprintf(hop_arg, sizeof(hop_arg), "%%ci%u", max_depth);
+    } else {
+        g_strlcpy(hop_arg, "%ci*", sizeof(hop_arg));
+    }
+
     GString *script = g_string_new("read_verilog -sv -defer");
     for (guint i = 0; i < GLOBALS->netlist_source_files->len; i++) {
         g_string_append_printf(
@@ -419,9 +443,10 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
     }
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; flatten; opt; techmap; opt; "
-                          "select %s %%ci*; show -format dot -prefix %s -notitle -href",
+                          "select %s %s; show -format dot -prefix %s -notitle -href",
                           top_module,
                           select_expr,
+                          hop_arg,
                           prefix);
 
     gchar *yosys_bin = g_find_program_in_path("yosys");
@@ -531,7 +556,12 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
 // path doesn't need (plain `show` has no such restriction).
 #define GATE_CONE_SUBMODULE_NAME "gtkwave_cone"
 
-static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr,
+// `max_depth` (0 = unlimited) bounds the fan-in cone to that many hops
+// via Yosys's own `%ci<N>` selection operator (`%ci*` when unlimited) --
+// unlike the RTL schematic view's own depth limiting, no custom BFS is
+// needed here: Yosys's selection language already has hop-count-limited
+// fan-in built in.
+static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr, guint max_depth,
                                gchar **out_json_text, GError **error)
 {
     gchar *json_path = NULL;
@@ -543,6 +573,13 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
     g_unlink(json_path);
     gchar *prefix = g_strdup(json_path);
 
+    gchar hop_arg[16];
+    if (max_depth > 0) {
+        g_snprintf(hop_arg, sizeof(hop_arg), "%%ci%u", max_depth);
+    } else {
+        g_strlcpy(hop_arg, "%ci*", sizeof(hop_arg));
+    }
+
     GString *script = g_string_new("read_verilog -sv -defer");
     for (guint i = 0; i < GLOBALS->netlist_source_files->len; i++) {
         g_string_append_printf(
@@ -550,10 +587,11 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
     }
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; flatten; memory; opt; techmap; opt; "
-                          "select %s %%ci*; submod -name " GATE_CONE_SUBMODULE_NAME "; "
+                          "select %s %s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
                           "select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
                           top_module,
                           select_expr,
+                          hop_arg,
                           prefix);
 
     gchar *yosys_bin = g_find_program_in_path("yosys");
@@ -854,21 +892,25 @@ static GPtrArray *parse_netlistsvg_cell_nodes(const gchar *svg_text, GHashTable 
 {
     GPtrArray *nodes = g_ptr_array_new_with_free_func(gate_node_info_free);
     GRegex *re = g_regex_new(
-        "<g s:type=\"[^\"]*\" transform=\"translate\\(([-0-9.]+),([-0-9.]+)\\)\" "
+        "<g s:type=\"([^\"]*)\" transform=\"translate\\(([-0-9.]+),([-0-9.]+)\\)\" "
         "s:width=\"([0-9.]+)\" s:height=\"([0-9.]+)\" id=\"cell_([^\"]*)\"",
         0, 0, NULL);
 
     GMatchInfo *match_info = NULL;
     g_regex_match(re, svg_text, 0, &match_info);
     while (g_match_info_matches(match_info)) {
-        gchar *x_str = g_match_info_fetch(match_info, 1);
-        gchar *y_str = g_match_info_fetch(match_info, 2);
-        gchar *w_str = g_match_info_fetch(match_info, 3);
-        gchar *h_str = g_match_info_fetch(match_info, 4);
-        gchar *cell_id = g_match_info_fetch(match_info, 5);
+        gchar *type_str = g_match_info_fetch(match_info, 1);
+        gchar *x_str = g_match_info_fetch(match_info, 2);
+        gchar *y_str = g_match_info_fetch(match_info, 3);
+        gchar *w_str = g_match_info_fetch(match_info, 4);
+        gchar *h_str = g_match_info_fetch(match_info, 5);
+        gchar *cell_id = g_match_info_fetch(match_info, 6);
 
         GateNodeInfo *info = g_new0(GateNodeInfo, 1);
         info->id = cell_id; /* adopts the g_match_info_fetch() allocation */
+        info->is_boundary_port =
+            g_str_equal(type_str, "inputExt") || g_str_equal(type_str, "outputExt");
+        g_free(type_str);
         info->x = g_ascii_strtod(x_str, NULL);
         info->y = g_ascii_strtod(y_str, NULL);
         info->w = g_ascii_strtod(w_str, NULL);
@@ -1027,16 +1069,40 @@ static gboolean gate_run_dot_to_plain(const gchar *dot_text, gchar **out_plain_t
     return TRUE;
 }
 
-typedef struct
+// Default depth limit for a newly-opened gate-level schematic window --
+// same "start small" Cone Window reasoning as schematic_view.c's own
+// SCHEMATIC_DEFAULT_MAX_DEPTH. Smaller than the RTL view's default: a
+// single hop here is already a whole module instance (or several gates
+// once dissolved/flattened), not one RTL dataflow-graph node.
+#define GATE_SCHEMATIC_DEFAULT_MAX_DEPTH 2
+
+struct GateSchematicState
 {
     GtkWidget *window;
     GtkWidget *image;
     GtkWidget *scrolled;
+    GtkWidget *depth_spin;
     GdkPixbuf *original_pixbuf;
-    gchar *signal_path; /* only used to suggest an Export Image filename */
+    gchar *signal_path;
+    gchar *top_module; /* GLOBALS->netlist_top_module at the time this window
+                        was opened, or the auto-detected DUT module type if
+                        that fallback kicked in -- cached so re-renders
+                        (depth spinner, expand-click) don't need to redo
+                        that detection every time. NULL until the first
+                        gate_refresh_schematic() call resolves it. */
+    gchar *select_prefix; /* make_yosys_select()'s strip_prefix argument that
+                           paired with top_module above -- either the same
+                           string (no auto-detection needed) or the detected
+                           DUT instance's path prefix. */
+    guint max_depth; /* 0 = unlimited (today's long-standing behavior);
+                      otherwise bounds the fan-in cone to this many hops via
+                      Yosys's `%ci<N>` selection operator. Defaults to
+                      GATE_SCHEMATIC_DEFAULT_MAX_DEPTH for a newly-opened
+                      window (Verdi/StarVision "start small" Cone Window
+                      model) rather than always rendering the whole cone. */
     GPtrArray *nodes; /* GateNodeInfo*, this render's hit-testing data */
     gdouble zoom;
-} GateSchematicState;
+};
 
 static void gate_schematic_state_free(gpointer data)
 {
@@ -1048,6 +1114,8 @@ static void gate_schematic_state_free(gpointer data)
         g_ptr_array_unref(state->nodes);
     }
     g_free(state->signal_path);
+    g_free(state->top_module);
+    g_free(state->select_prefix);
     g_free(state);
 }
 
@@ -1131,6 +1199,39 @@ static void on_gate_zoom_100_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     gate_set_zoom((GateSchematicState *)user_data, 1.0);
+}
+
+// Sets state->max_depth and keeps the toolbar spinner in sync (blocking
+// its own "value-changed" handler so this doesn't recurse/double-
+// refresh) -- see set_max_depth() in schematic_view.c for the identical
+// pattern/reasoning.
+static void gate_set_max_depth(GateSchematicState *state, guint new_depth)
+{
+    state->max_depth = new_depth;
+    if (state->depth_spin != NULL) {
+        g_signal_handlers_block_by_func(state->depth_spin, G_CALLBACK(on_gate_depth_spin_changed),
+                                        state);
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(state->depth_spin), new_depth);
+        g_signal_handlers_unblock_by_func(
+            state->depth_spin, G_CALLBACK(on_gate_depth_spin_changed), state);
+    }
+}
+
+// Double-clicking a boundary port connector (see GateNodeInfo's own
+// comment) grows the depth limit by 2 hops and re-renders the same root
+// signal's cone -- see schematic_expand_depth() in schematic_view.c for
+// the identical pattern.
+static void gate_expand_depth(GateSchematicState *state)
+{
+    gate_set_max_depth(state, state->max_depth + 2);
+    gate_refresh_schematic(state);
+}
+
+static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data)
+{
+    GateSchematicState *state = user_data;
+    state->max_depth = (guint)gtk_spin_button_get_value_as_int(widget);
+    gate_refresh_schematic(state);
 }
 
 // Standard image-viewer/IDE scroll-wheel convention: plain wheel scrolls
@@ -1264,22 +1365,27 @@ static void on_gate_scrolled_size_allocate_fit_once(GtkWidget *widget, GtkAlloca
     }
 }
 
-// Click-to-source: hit-tests the click against this render's node boxes
-// (built from -Tplain, see parse_gate_plain_nodes()) and, if the node has
-// an HDL source location (most do -- cells and named nets; an
-// optimized-away intermediate net may not), jumps the source cross-probe
-// panel there. No right-click/context-menu/double-click behavior yet --
-// unlike the RTL schematic view, there's no gtkwave signal path to drive
-// Show Drivers/Loads/Add to Waveform with (Yosys's post-techmap names
-// don't map back to the original RTL signal names, see this file's own
-// header comment).
+// Hit-tests the click against this render's node boxes (built from
+// -Tplain or netlistsvg's own SVG, see parse_gate_plain_nodes()/
+// parse_netlistsvg_cell_nodes()). Single-click on an internal gate/cell
+// jumps the source cross-probe panel to its HDL source location, if
+// Yosys could attribute one; single-click on a boundary port connector
+// just names it as such; double-click on a boundary port connector
+// expands the depth limit instead (see gate_expand_depth()) -- the
+// gate-level view's analogue of the RTL schematic view's own boundary-
+// node double-click behavior. No right-click/context-menu/Add to
+// Waveform yet -- unlike the RTL schematic view, there's no gtkwave
+// signal path to drive those with (Yosys's post-techmap names don't map
+// back to the original RTL signal names, see this file's own header
+// comment).
 static gboolean
 on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
     (void)widget;
     GateSchematicState *state = user_data;
 
-    if (event->type != GDK_BUTTON_PRESS || event->button != 1) {
+    if (event->button != 1 ||
+        (event->type != GDK_BUTTON_PRESS && event->type != GDK_2BUTTON_PRESS)) {
         return FALSE;
     }
 
@@ -1289,7 +1395,18 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
         return FALSE;
     }
 
-    if (node->href != NULL) {
+    if (event->type == GDK_2BUTTON_PRESS) {
+        if (node->is_boundary_port) {
+            gate_expand_depth(state);
+        } else {
+            status_text("GTKWAVE | Double-click only expands at a boundary port connector.\n");
+        }
+        return TRUE;
+    }
+
+    if (node->is_boundary_port) {
+        status_text("GTKWAVE | Boundary port -- double-click to show more upstream.\n");
+    } else if (node->href != NULL) {
         jump_to_gate_node_source(node->href);
     } else {
         status_text(
@@ -1299,22 +1416,22 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
     return TRUE;
 }
 
-void netlist_query_show_gate_schematic(const char *signal_path)
+// Re-queries Yosys for state->signal_path's fan-in cone at the current
+// state->max_depth (via `%ci<N>`/`%ci*`, see run_yosys()/run_yosys_json())
+// and re-renders it. The testbench-vs-real-DUT auto-detection fallback
+// (see find_dut_instance()'s own comment) only runs the first time this
+// is called for a given window -- once top_module/select_prefix resolve
+// (or GLOBALS->netlist_top_module already worked directly), they're
+// cached on `state` so a later depth-spinner tick or boundary-port
+// double-click re-queries Yosys directly, without re-scanning source
+// files for an instantiation every time. See refresh_schematic() in
+// schematic_view.c for the RTL view's analogous (simpler, since it has
+// no such resolution step) version.
+static void gate_refresh_schematic(GateSchematicState *state)
 {
-    GtkWindow *parent = GLOBALS->mainwindow != NULL && GTK_IS_WINDOW(GLOBALS->mainwindow)
-                          ? GTK_WINDOW(GLOBALS->mainwindow)
-                          : NULL;
-
-    if (!netlist_query_ensure_config(parent)) {
-        return;
-    }
-
-    const gchar *top_module = GLOBALS->netlist_top_module;
-    gchar *select_expr = make_yosys_select(top_module, top_module, signal_path);
-
     // netlistsvg (Node.js + `npm install -g netlistsvg`) gives real
     // traditional gate symbols and automatic orthogonal routing; the
-    // dot/Graphviz path above is kept as a fallback for a machine that
+    // dot/Graphviz path below is kept as a fallback for a machine that
     // doesn't have it installed -- still a real improvement over the
     // original SVG/rsvg-convert pipeline (orthogonal routing via
     // inject_ortho_splines()), just boxier-looking.
@@ -1325,60 +1442,89 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     GError *error = NULL;
     gchar *dot_text = NULL; /* used only when !use_netlistsvg */
     gchar *json_text = NULL; /* used only when use_netlistsvg */
-    gboolean ok = use_netlistsvg ? run_yosys_json(top_module, select_expr, &json_text, &error)
-                                : run_yosys(top_module, select_expr, &dot_text, &error);
-    g_free(select_expr);
+    gboolean ok;
 
-    // The configured top is very often the VCD's own dump-root scope
-    // (see guess_top_module() in netlist_query_ui.c), which for a design
-    // loaded as a full testbench is the testbench itself -- not
-    // synthesizable RTL. If that's exactly why Yosys failed, try again
-    // against the real DUT it most likely instantiates, auto-detected
-    // from the source text, before giving up.
-    gboolean auto_detected = FALSE;
-    gchar *detected_module_type = NULL;
-    gchar *detected_instance_name = NULL;
-
-    if (!ok && yosys_error_suggests_testbench(error->message) &&
-        find_dut_instance(top_module, &detected_module_type, &detected_instance_name)) {
-        g_clear_error(&error);
-
-        gchar *instance_prefix = g_strconcat(top_module, ".", detected_instance_name, NULL);
-        gchar *retry_select = make_yosys_select(detected_module_type, instance_prefix, signal_path);
-        g_free(instance_prefix);
+    if (state->top_module != NULL) {
+        gchar *select_expr =
+            make_yosys_select(state->top_module, state->select_prefix, state->signal_path);
+        ok = use_netlistsvg ? run_yosys_json(state->top_module, select_expr, state->max_depth,
+                                             &json_text, &error)
+                           : run_yosys(state->top_module, select_expr, state->max_depth,
+                                       &dot_text, &error);
+        g_free(select_expr);
+    } else {
+        const gchar *top_module = GLOBALS->netlist_top_module;
+        gchar *select_expr = make_yosys_select(top_module, top_module, state->signal_path);
 
         ok = use_netlistsvg
-                 ? run_yosys_json(detected_module_type, retry_select, &json_text, &error)
-                 : run_yosys(detected_module_type, retry_select, &dot_text, &error);
-        g_free(retry_select);
-        auto_detected = ok;
+                 ? run_yosys_json(top_module, select_expr, state->max_depth, &json_text, &error)
+                 : run_yosys(top_module, select_expr, state->max_depth, &dot_text, &error);
+        g_free(select_expr);
+
+        // The configured top is very often the VCD's own dump-root scope
+        // (see guess_top_module() in netlist_query_ui.c), which for a
+        // design loaded as a full testbench is the testbench itself --
+        // not synthesizable RTL. If that's exactly why Yosys failed, try
+        // again against the real DUT it most likely instantiates, auto-
+        // detected from the source text, before giving up.
+        if (!ok && yosys_error_suggests_testbench(error->message)) {
+            gchar *detected_module_type = NULL;
+            gchar *detected_instance_name = NULL;
+
+            if (find_dut_instance(top_module, &detected_module_type, &detected_instance_name)) {
+                g_clear_error(&error);
+
+                gchar *instance_prefix =
+                    g_strconcat(top_module, ".", detected_instance_name, NULL);
+                gchar *retry_select =
+                    make_yosys_select(detected_module_type, instance_prefix, state->signal_path);
+
+                ok = use_netlistsvg ? run_yosys_json(detected_module_type, retry_select,
+                                                     state->max_depth, &json_text, &error)
+                                   : run_yosys(detected_module_type, retry_select,
+                                               state->max_depth, &dot_text, &error);
+                g_free(retry_select);
+
+                if (ok) {
+                    gchar *msg = g_strdup_printf(
+                        "GTKWAVE | '%s' isn't synthesizable RTL (likely a testbench) -- "
+                        "used auto-detected DUT '%s' (instance '%s.%s') instead.\n",
+                        top_module,
+                        detected_module_type,
+                        top_module,
+                        detected_instance_name);
+                    status_text(msg);
+                    g_free(msg);
+
+                    state->top_module = detected_module_type; /* state adopts this */
+                    state->select_prefix = instance_prefix; /* state adopts this */
+                } else {
+                    g_free(detected_module_type);
+                    g_free(instance_prefix);
+                }
+                g_free(detected_instance_name);
+            }
+        }
+
+        if (ok && state->top_module == NULL) {
+            /* Plain GLOBALS->netlist_top_module worked on the first try --
+             * cache it so later refreshes skip straight to the query. */
+            state->top_module = g_strdup(top_module);
+            state->select_prefix = g_strdup(top_module);
+        }
     }
 
     if (!ok) {
         gchar *msg = g_strdup_printf("GTKWAVE | Gate-level schematic failed for '%s': %s\n",
-                                     signal_path,
+                                     state->signal_path,
                                      error != NULL ? error->message : "unknown error");
         status_text(msg);
         g_free(msg);
         g_clear_error(&error);
-        g_free(detected_module_type);
-        g_free(detected_instance_name);
         return;
     }
 
-    if (auto_detected) {
-        gchar *msg = g_strdup_printf(
-            "GTKWAVE | '%s' isn't synthesizable RTL (likely a testbench) -- "
-            "used auto-detected DUT '%s' (instance '%s.%s') instead.\n",
-            top_module,
-            detected_module_type,
-            top_module,
-            detected_instance_name);
-        status_text(msg);
-        g_free(msg);
-    }
-
-    if (has_bit_range_suffix(signal_path)) {
+    if (has_bit_range_suffix(state->signal_path)) {
         status_text("GTKWAVE | Gate-level schematic doesn't support bit-range slicing -- "
                    "showing the fan-in for the whole bus instead.\n");
     }
@@ -1398,8 +1544,6 @@ void netlist_query_show_gate_schematic(const char *signal_path)
             g_free(msg);
             g_clear_error(&error);
             g_free(json_text);
-            g_free(detected_module_type);
-            g_free(detected_instance_name);
             return;
         }
 
@@ -1415,8 +1559,6 @@ void netlist_query_show_gate_schematic(const char *signal_path)
             g_clear_error(&error);
             g_free(svg_text);
             g_free(json_text);
-            g_free(detected_module_type);
-            g_free(detected_instance_name);
             return;
         }
 
@@ -1447,8 +1589,6 @@ void netlist_query_show_gate_schematic(const char *signal_path)
             g_clear_error(&error);
             g_free(ortho_dot_text);
             g_free(dot_text);
-            g_free(detected_module_type);
-            g_free(detected_instance_name);
             return;
         }
 
@@ -1471,9 +1611,6 @@ void netlist_query_show_gate_schematic(const char *signal_path)
         g_free(png_path);
     }
 
-    g_free(detected_module_type);
-    g_free(detected_instance_name);
-
     if (pixbuf == NULL) {
         if (nodes != NULL) {
             g_ptr_array_unref(nodes);
@@ -1483,6 +1620,28 @@ void netlist_query_show_gate_schematic(const char *signal_path)
         status_text(msg);
         g_free(msg);
         g_clear_error(&error);
+        return;
+    }
+
+    if (state->original_pixbuf != NULL) {
+        g_object_unref(state->original_pixbuf);
+    }
+    state->original_pixbuf = pixbuf; /* state now owns this reference */
+    gate_apply_zoom(state); /* re-render at whatever zoom is already in effect */
+
+    if (state->nodes != NULL) {
+        g_ptr_array_unref(state->nodes);
+    }
+    state->nodes = nodes;
+}
+
+void netlist_query_show_gate_schematic(const char *signal_path)
+{
+    GtkWindow *parent = GLOBALS->mainwindow != NULL && GTK_IS_WINDOW(GLOBALS->mainwindow)
+                          ? GTK_WINDOW(GLOBALS->mainwindow)
+                          : NULL;
+
+    if (!netlist_query_ensure_config(parent)) {
         return;
     }
 
@@ -1498,6 +1657,21 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(toolbar), 4);
     gtk_box_pack_start(GTK_BOX(vbox), toolbar, FALSE, FALSE, 0);
+
+    GtkWidget *depth_label = gtk_label_new("Depth:");
+    gtk_box_pack_start(GTK_BOX(toolbar), depth_label, FALSE, FALSE, 0);
+
+    GtkWidget *depth_spin = gtk_spin_button_new_with_range(0, 99, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(depth_spin), GATE_SCHEMATIC_DEFAULT_MAX_DEPTH);
+    gtk_widget_set_tooltip_text(
+        depth_spin, "How many fan-in hops (module instances/gates) to show from this signal "
+                   "(0 = unlimited, the old behavior). A boundary port connector at the edge "
+                   "of the current depth can be double-clicked, or this raised, to see "
+                   "further upstream.");
+    gtk_box_pack_start(GTK_BOX(toolbar), depth_spin, FALSE, FALSE, 0);
+
+    GtkWidget *depth_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(toolbar), depth_sep, FALSE, FALSE, 4);
 
     GtkWidget *zoom_out_button = gtk_button_new_with_label("\xe2\x88\x92");
     gtk_widget_set_tooltip_text(zoom_out_button, "Zoom Out");
@@ -1541,16 +1715,16 @@ void netlist_query_show_gate_schematic(const char *signal_path)
     state->window = window;
     state->image = image;
     state->scrolled = scrolled;
+    state->depth_spin = depth_spin;
     state->zoom = 1.0;
+    state->max_depth = GATE_SCHEMATIC_DEFAULT_MAX_DEPTH;
     state->signal_path = g_strdup(signal_path);
-    state->original_pixbuf = pixbuf; /* state now owns this reference */
-    state->nodes = nodes;
-    gate_apply_zoom(state);
 
     gtk_widget_add_events(event_box, GDK_BUTTON_PRESS_MASK);
     g_signal_connect(event_box, "button-press-event", G_CALLBACK(on_gate_image_button_press),
                      state);
 
+    g_signal_connect(depth_spin, "value-changed", G_CALLBACK(on_gate_depth_spin_changed), state);
     g_signal_connect(zoom_in_button, "clicked", G_CALLBACK(on_gate_zoom_in_clicked), state);
     g_signal_connect(zoom_out_button, "clicked", G_CALLBACK(on_gate_zoom_out_clicked), state);
     g_signal_connect(zoom_fit_button, "clicked", G_CALLBACK(on_gate_zoom_fit_clicked), state);
@@ -1563,6 +1737,8 @@ void netlist_query_show_gate_schematic(const char *signal_path)
 
     g_object_set_data_full(G_OBJECT(window), "gate-schematic-state", state,
                            gate_schematic_state_free);
+
+    gate_refresh_schematic(state);
 
     gtk_widget_show_all(window);
 }
