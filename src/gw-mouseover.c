@@ -121,7 +121,23 @@ gchar *local_trace_asciival(GwTrace *t, GwTime tim)
             char *str;
             GwHistEnt *h_ptr;
             if ((h_ptr = bsearch_node(t->n.nd, tim - t->shift))) {
-                if (!t->n.nd->extvals) {
+                // Every loader (VCD/FST/GHW/...) bootstraps a node's history
+                // with a pre-dump sentinel head entry at a fixed before-any-
+                // real-data time (-1 or -2 depending on loader) whose value
+                // is always stored as a plain GW_BIT_X-style h_val -- even
+                // for an extvals (multi-bit/real/string) node, which never
+                // gets a real h_vector string allocated for this entry.
+                // bsearch_node() returns this sentinel when queried for any
+                // time before the dump's own first real sample, so the
+                // extvals branch below must not treat it as a real vector/
+                // real/string entry (it isn't one, and h_ptr->v.h_vector is
+                // actually the raw h_val byte misread as a pointer -- a
+                // confirmed segfault). Same guard list_x_view.c's
+                // scan_node_trace() already uses ("pre-dump sentinel entry,
+                // not a real dumped value").
+                gboolean is_real_entry = h_ptr->time >= GLOBALS->tims.first;
+
+                if (!t->n.nd->extvals || !is_real_entry) {
                     GwMarker *primary_marker = gw_project_get_primary_marker(GLOBALS->project);
                     GwTime primary_pos = gw_marker_get_position(primary_marker);
 
