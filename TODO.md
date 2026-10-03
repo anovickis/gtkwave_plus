@@ -969,6 +969,59 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   crash, inspected the live `GwHistEnt` confirming the exact mechanism,
   then confirmed the fix resolves it and the schematic renders correct
   "= x" annotations for not-yet-driven signals.
+- **Fixed the gate-level cone of logic for a signal nested two or more
+  levels below the dut** (e.g. a wrapper module's own sub-instance's own
+  sub-instance, as opposed to a signal declared directly on the dut or
+  one hop into it -- an everyday pattern in real RTL, built and tested
+  against a deliberately deeper 4-module example design to catch this).
+  Root cause confirmed directly against real Yosys runs: Yosys's `/`
+  selection syntax only ever resolves ONE level of cell nesting below a
+  named module ("top/cellA" resolves, "top/cellA/cellB" and
+  "top/cellA.wire_in_cellB" don't), while `make_yosys_select()` builds
+  exactly that second, unselectable form whenever the queried signal
+  lives two or more levels down -- the dotted form only becomes
+  selectable once Yosys's own `flatten` has actually renamed the wire to
+  that same form itself. Fixed by unconditionally flattening just the
+  immediate child cell of the top module on the path to the queried
+  signal before selecting (`build_ancestor_flatten_clause()` in
+  `gate_schematic_view.c`) -- confirmed `flatten <cell>` recurses into
+  everything beneath it, so one flatten is enough regardless of how much
+  deeper the real nesting goes, and flattening the same cell twice (it's
+  also separately dissolved) is harmless. Also fixed a related bug this
+  surfaced in the existing sibling-output-port-stripping logic: its
+  `extract_select_leaf_name()` assumed submod always names the extracted
+  port after the queried signal's bare final identifier (e.g. "step" from
+  "u_seq.step") -- true for a shallow signal, but confirmed directly that
+  at 1+ levels of real nesting submod actually keeps the *whole* dotted
+  relative path as the port name (e.g. "u_exec.rf_rdata_b", not
+  "rf_rdata_b"). Renamed to `extract_select_relative_path()` and fixed to
+  keep the whole path. Verified live via gdb against the new, deeper
+  example design: querying `u_exec.rf_rdata_b` (one level into the dut)
+  now renders a correct diagram -- the register file's memory array as
+  one block with wide buses, its true inputs, and no sibling port leak.
+  **Known, NOT fixed, honestly still open**: a signal that's ALSO
+  re-declared under a different name one or more levels further out,
+  connected the whole way by nothing but a straight port connection
+  (e.g. this new design's ALU outputs -- `result`/`zero`/`carry`/
+  `overflow`/`negative` -- each immediately re-wired to its own
+  "alu_"-prefixed wire the next level up) still fails: confirmed
+  directly that Yosys's own `opt` either renames such a wire to the
+  *outer* declaration instead of keeping the leaf name, or, for a
+  multi-bit bus only ever consumed bit-by-bit by further derived signals
+  like `result`, eliminates it as a single named object entirely once
+  nothing in the selected cone still needs it as one indivisible bus --
+  in which case there's no single correct port name to find by any
+  static analysis of the select expression at all. The existing
+  `-assert-min 1` guard turns this into a normal, reported failure
+  ("yosys did not produce a gate-level netlist for this signal") instead
+  of a wrong diagram, so it fails safe, but querying e.g. `u_alu.result`
+  or `u_alu.negative` through this specific design's wrapper chain
+  doesn't work yet. Would need determining the real post-`submod` port
+  name empirically (e.g. tagging the root object and finding it by
+  attribute afterward) rather than guessing from the select expression --
+  tried via a preliminary "ask Yosys what it's still called" pass first,
+  but confirmed that doesn't help either, since the renaming/elimination
+  happens *during* `submod` itself, not before it.
 
 ## Up next, in order
 
