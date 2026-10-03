@@ -850,6 +850,25 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   split (the final `a` of `rdata_a`) now selects the whole 7-character
   identifier (offsets 9-16); triple-click's line-select granularity
   still correctly falls through to GTK's own default handling.
+- **Fixed "select a signal first" firing for every ordinary (non-
+  aliased) signal** in the Quick Format popover's netlist-query buttons
+  (Show Drivers/Loads/Cone of Logic/Schematic/Gate Schematic).
+  `find_target_trace()`/`build_query_signal_path()` required
+  `GwTrace::name_full` to be set, but that field is genuinely only ever
+  populated for an explicitly aliased signal or one restored from a
+  saved session -- every ordinary add path passes a NULL alias.
+  Confirmed directly: a plain signal just dragged in from the SST tree
+  has `name_full == NULL`, always. Fixed with a new `trace_full_path()`
+  helper that falls back to the underlying node/vector's own name
+  (`nd->nname`/`vec->bvname`, never shortened by `hier_max_level` the
+  way `t->name` can be) using the same discriminant `trace_is_bus()`
+  already relies on. `on_show_gate_schematic_clicked()` had its own
+  separate instance of the same bug (used `t->name_full` directly,
+  bypassing `build_query_signal_path()` entirely) -- fixed the same
+  way. Verified live via gdb: a GwTrace built to match an ordinary
+  signal's exact shape (no alias, highlighted, backed by a real node)
+  now correctly resolves its full path through both the real Show
+  Drivers and Show Gate Schematic click handlers.
 
 ## Up next, in order
 
