@@ -12,7 +12,6 @@
 #include "bus_ops.h"
 #include "gate_schematic_view.h"
 #include "netlist_query_ui.h"
-#include "schematic_view.h"
 #include "signal_event_report.h"
 #include "status.h"
 
@@ -230,6 +229,18 @@ static void on_show_loads_clicked(GtkButton *button, gpointer user_data)
     g_free(signal_path);
 }
 
+// "Show Cone of Logic" -- the real gate-level schematic (Yosys-
+// synthesized AND/OR/XOR/NOT/MUX/DFF shapes, real wires), NOT the RTL
+// dataflow-graph view (schematic_view.c's netlist_query_show_schematic()
+// -- a pre-synthesis Assignment/Conditional/Case/Merge graph, which
+// reads as a flowchart rather than a schematic since no gates exist yet
+// at that level, and isn't what's wanted here per direct feedback: "now
+// it opens a window labeled schematic, but what we get is a flow
+// chart"). gate_schematic_view.c already has its own bit-range-
+// stripping and testbench-vs-DUT auto-detection (independent of, and
+// just as capable as, the slang-netlist-backed versions in netlist_
+// query_ui.c/schematic_view.c), so build_query_signal_path()'s bit-
+// range-suffixed path (if any) is handled correctly either way.
 static void on_show_schematic_clicked(GtkButton *button, gpointer user_data)
 {
     GwTrace *t = find_target_trace();
@@ -240,22 +251,8 @@ static void on_show_schematic_clicked(GtkButton *button, gpointer user_data)
         return;
     }
     gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
-    netlist_query_show_schematic(signal_path);
+    netlist_query_show_gate_schematic(signal_path);
     g_free(signal_path);
-}
-
-static void on_show_gate_schematic_clicked(GtkButton *button, gpointer user_data)
-{
-    (void)user_data;
-
-    GwTrace *t = find_target_trace();
-    close_ancestor_popover(GTK_WIDGET(button));
-
-    if (t == NULL) {
-        status_text("GTKWAVE | Select a signal first to show its gate-level schematic.\n");
-        return;
-    }
-    netlist_query_show_gate_schematic(trace_full_path(t));
 }
 
 static void on_show_event_report_clicked(GtkButton *button, gpointer user_data)
@@ -388,22 +385,17 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     g_signal_connect(loads_button, "clicked", G_CALLBACK(on_show_loads_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), loads_button, TRUE, TRUE, 0);
 
-    // "Show Cone of Logic" -- a visual rendering of the signal's fan-in
-    // cone (gw_netlist_query_get_cone_dot(), same query a flat
-    // driver/load edge list would use), not a results list: a results-
-    // list version of this existed earlier and was removed as pure UI
-    // duplication once this button was pointed at the diagram instead.
+    // "Show Cone of Logic" -- the real gate-level schematic (see
+    // on_show_schematic_clicked()'s own comment for why this isn't the
+    // RTL dataflow view). A separate "Show Gate Schematic (SVG)" button
+    // existed earlier and was removed as pure UI duplication once this
+    // button was pointed at the same diagram.
     GtkWidget *schematic_button = gtk_button_new_with_label("Show Cone of Logic");
     g_signal_connect(
         schematic_button, "clicked", G_CALLBACK(on_show_schematic_clicked), range_entry);
     gtk_box_pack_start(GTK_BOX(netlist_box), schematic_button, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), netlist_box, FALSE, FALSE, 0);
-
-    GtkWidget *gate_schematic_button = gtk_button_new_with_label("Show Gate Schematic (SVG)");
-    g_signal_connect(
-        gate_schematic_button, "clicked", G_CALLBACK(on_show_gate_schematic_clicked), NULL);
-    gtk_box_pack_start(GTK_BOX(box), gate_schematic_button, FALSE, FALSE, 0);
 
     GtkWidget *event_report_button = gtk_button_new_with_label("Event Report");
     g_signal_connect(

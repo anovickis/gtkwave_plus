@@ -2089,7 +2089,7 @@ void netlist_query_show_gate_schematic(const char *signal_path)
         return;
     }
 
-    gchar *title = g_strdup_printf("Gate-Level Schematic: %s", signal_path);
+    gchar *title = g_strdup_printf("Cone of Logic: %s", signal_path);
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), title);
     gtk_window_set_default_size(GTK_WINDOW(window), 700, 500);
