@@ -471,6 +471,30 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
 // rendering.
 #define GATE_CONE_SUBMODULE_NAME "gtkwave_cone"
 
+// Extracts the bare leaf name from a Yosys select expression of the
+// form "<module>/<relative.path>" (see make_yosys_select()) -- e.g.
+// "alu_result" from "cpu_top/alu_result", or "step" from
+// "cpu_top/u_seq.step". This is exactly the port name submod() gives
+// the queried signal in the extracted cone module, confirmed directly
+// against a real Yosys run regardless of nesting depth -- used to
+// identify (and keep) the one legitimate output port of the cone,
+// stripping any others (see the "fan-in cone shows a sibling output
+// port of a black-box cell that has nothing to do with the queried
+// signal" fix in run_yosys_json()'s own comment).
+static gchar *extract_select_leaf_name(const gchar *select_expr)
+{
+    const gchar *leaf = select_expr;
+    const gchar *last_slash = strrchr(select_expr, '/');
+    if (last_slash != NULL && last_slash + 1 > leaf) {
+        leaf = last_slash + 1;
+    }
+    const gchar *last_dot = strrchr(select_expr, '.');
+    if (last_dot != NULL && last_dot + 1 > leaf) {
+        leaf = last_dot + 1;
+    }
+    return g_strdup(leaf);
+}
+
 // `max_depth` (0 = unlimited) bounds the fan-in cone to that many hops
 // via Yosys's own `%ci<N>` selection operator (`%ci*` when unlimited) --
 // unlike the RTL schematic view's own depth limiting, no custom BFS is
@@ -479,6 +503,27 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
 // (nothing dissolved/filtered yet) or caller-built fragments -- see
 // run_yosys()'s own doc comment, and gate_refresh_schematic() for how
 // they're built from state->dissolved_instances/state->filtered_out.
+//
+// `submod` always gives an included cell a complete, valid port set --
+// confirmed directly against a real Yosys run: selecting just the fan-in
+// of `alu_result` (driven by the `alu` cell's `result` output) also
+// exposes that cell's *other*, unrelated `zero` output as a second
+// boundary port of the extracted cone module, purely because the whole
+// `alu` cell is included, not because anything in the cone actually
+// depends on `zero`. Per direct feedback ("alu_zero... is not decisive
+// to the input of [alu_result]... it should not be shown"), the fix
+// below strips every output port except the one actually queried
+// (`root_leaf`) right after `submod`, then runs `opt_clean -purge` to
+// drop the now-genuinely-dead internal wire -- confirmed this generalizes
+// correctly at deeper depths (u_rf's `rdata_a`/`rdata_b` and u_alu's
+// `zero` all correctly stripped, cells themselves untouched). The
+// `-assert-min 1` guard matters: if `root_leaf` ever failed to match
+// (should never happen -- confirmed it's always submod's exact port
+// name for the queried net, regardless of nesting depth), subtracting
+// an empty set from "all outputs" would silently strip the one output
+// actually wanted too; asserting first makes that abort the whole Yosys
+// run (a normal, already-handled failure here) instead of silently
+// corrupting the result.
 static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr, guint max_depth,
                                const gchar *flatten_clause, const gchar *filter_suffix,
                                gchar **out_json_text, GError **error)
@@ -499,6 +544,15 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
         g_strlcpy(hop_arg, "%ci*", sizeof(hop_arg));
     }
 
+    gchar *root_leaf = extract_select_leaf_name(select_expr);
+    gchar *prune_suffix = g_strdup_printf(
+        "; select " GATE_CONE_SUBMODULE_NAME "/%s -assert-min 1; "
+        "select " GATE_CONE_SUBMODULE_NAME "/o:* " GATE_CONE_SUBMODULE_NAME "/%s %%d; "
+        "delete -port; select " GATE_CONE_SUBMODULE_NAME "; opt_clean -purge",
+        root_leaf,
+        root_leaf);
+    g_free(root_leaf);
+
     GString *script = g_string_new("read_verilog -sv -defer");
     for (guint i = 0; i < GLOBALS->netlist_source_files->len; i++) {
         g_string_append_printf(
@@ -507,13 +561,15 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; %smemory_collect; opt; techmap; "
                           "opt; select %s %s%s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
-                          "select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
+                          "%s; select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
                           top_module,
                           flatten_clause,
                           select_expr,
                           hop_arg,
                           filter_suffix,
+                          prune_suffix,
                           prefix);
+    g_free(prune_suffix);
 
     gchar *yosys_bin = g_find_program_in_path("yosys");
     if (yosys_bin == NULL) {
