@@ -1023,6 +1023,48 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   but confirmed that doesn't help either, since the renaming/elimination
   happens *during* `submod` itself, not before it.
 
+- **Derived / virtual signals** (signal popover -> "Derived Signal..."). A
+  Verilog-flavoured expression over existing signals, evaluated across the
+  whole dump into a new history and shown as an ordinary signal -- radix,
+  colour, analog mode and markers all work on it. The language: signal
+  references (bare `top.u.count`, or quoted), sized/unsized/x-z literals,
+  `{a,b}`, `{4{a}}`, `a[3]`, `a[7:4]`, unary/reduction `~ ! - & | ^ ~& ~| ~^`,
+  `* / %`, `+ -`, `<< >>`, `< <= > >=`, `== !=`, `&`, `^ ^~`, `|`, `&&`,
+  `||`, `?:`, at Verilog precedence. Highlighted signals are offered under
+  short names (`a`, or `s1`..`sN`) so full paths needn't be typed.
+  * **Engine** (`src/derived_expr.c`, GTK-free): lexer/parser, static width
+    analysis, 4-state evaluator, and a k-way time merge (one evaluation per
+    distinct change time, so simultaneous changes can't glitch; consecutive
+    equal results collapse; an operand reads X before its first change).
+    Bitwise/logical operators propagate unknowns per bit the Verilog way
+    (`0 & x = 0`, `1 | x = 1`, `!{1,x} = 0`); arithmetic, comparison and
+    shift amounts are pessimistic (any unknown operand bit -> all X).
+    600k input changes evaluate in ~13 ms. 16 tests, clean under Valgrind
+    (no errors or leaks, including every failing-parse path).
+  * **Names**: `gw_dump_file_lookup_symbol` already resolves `top.bus` to the
+    declared `top.bus[3:0]`; a typed `bus[3]` is a declared bit name if one
+    exists, else a select of `bus`. Expressions are saved in canonical, fully
+    parenthesised form with full names, so a save file never depends on the
+    aliases used to type it.
+  * **Node**: the result is a real `GwNode` laid out like a loaded one (head,
+    front cap, changes, end cap, sentinel), added via `AddNodeTraceReturn()`,
+    owned by a registry attached to the dump file so it is freed with it.
+  * **Persistence**: saved as `[derived_signal] "name" "expr"` at the trace's
+    position (both trace writers, including the pattern-search one) and
+    recomputed on load, so it survives File > Reload and Auto Update. Verified
+    on VCD and FST (lazy import), against hand-computed values from the
+    stimulus, plus a full Reload round trip of signals added only through the
+    API, and a screenshot of the rendered waveforms.
+  **Known gaps:** real- and string-valued operands are rejected; a derived
+  signal can't reference another derived signal (it would make save order
+  matter -- the message says so); no edit-in-place (delete and re-add);
+  arithmetic and comparisons are limited to 64-bit operands (bitwise, concat
+  and selects are not); widths are self-determined (the wider operand), so
+  `count + 1` wraps at count's width rather than widening; unsigned only (no
+  signed compare/shift); bit numbers count from the LSB of the VALUE, which
+  differs from the declared index for a `[0:7]`-style declaration; a derived
+  node's history is a full copy (fine for typical dumps, not lazily built).
+
 - **Gate-level Cone Window: per-net Start small / Expand** (double-click an
   input boundary port). The shown cone is now a union of seeds -- the root
   signal at the spinner's depth, plus one `(net, hops)` entry per boundary
@@ -1186,10 +1228,13 @@ the conversation history for the full reasoning behind this ordering.
 1. **Waveform Compare / structured two-run diffing.** One of the most-
    requested Verdi/nWave parity features. Big lift, big payoff.
 
-2. **Struct/union display** (expandable field tree) and **derived/virtual
-   signal expressions**. Bigger standalone features, no urgent driver
-   from anything else on this list -- pick up when there's a specific
-   need.
+2. **Struct/union display** (expandable field tree). **Derived/virtual
+   signal expressions** are done -- see the Done section above. Struct display
+   is still open: no urgent driver, and a design question first -- structs
+   reach gtkwave flattened into plain wide buses (see item 7), so a field tree
+   needs either the dump format to carry the layout (FST has struct/union
+   scope types and attribute records worth checking) or user-supplied field
+   definitions.
 
 3. ~~**Gate-level schematic "Cone Window"**~~ -- per-net Start small /
    Expand is done, see the Done section above (Dissolve, Filter Out and the

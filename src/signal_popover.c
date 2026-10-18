@@ -14,6 +14,7 @@
 #include "netlist_query_ui.h"
 #include "signal_event_report.h"
 #include "event_sequence_view.h"
+#include "derived_signals.h"
 #include "status.h"
 
 typedef void (*MenuAction)(gpointer, guint, GtkWidget *);
@@ -272,6 +273,14 @@ static void on_show_event_sequence_clicked(GtkButton *button, gpointer user_data
     event_sequence_view_show();
 }
 
+static void on_derived_signal_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    close_ancestor_popover(GTK_WIDGET(button));
+    derived_signal_show_dialog();
+}
+
 static void on_expand_subbus_clicked(GtkButton *button, gpointer user_data)
 {
     (void)user_data;
@@ -415,6 +424,14 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     g_signal_connect(
         event_sequence_button, "clicked", G_CALLBACK(on_show_event_sequence_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(box), event_sequence_button, FALSE, FALSE, 0);
+
+    GtkWidget *derived_button = gtk_button_new_with_label("Derived Signal\xe2\x80\xa6");
+    gtk_widget_set_tooltip_text(
+        derived_button,
+        "Add a signal computed from an expression over existing signals, e.g. (a & b) | c, "
+        "count + 1, or state == 3");
+    g_signal_connect(derived_button, "clicked", G_CALLBACK(on_derived_signal_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(box), derived_button, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
 

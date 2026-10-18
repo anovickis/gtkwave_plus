@@ -21,6 +21,8 @@ gtkwave_sources = [
     'console_panel.c',
     'currenttime.c',
     'debug.c',
+    'derived_expr.c',
+    'derived_signals.c',
     'edgebuttons.c',
     'entry.c',
     'event_sequence.c',
@@ -173,6 +175,14 @@ gate_cone_select_test = executable(
 )
 test('gate_cone_select', gate_cone_select_test,
      args: [meson.project_source_root() / 'lib/libgtkwave/test/files/gate_cone_design.sv'])
+
+derived_expr_test = executable(
+    'derived_expr_test',
+    ['derived_expr.c', 'derived_expr_test.c'],
+    dependencies: [glib_dep],
+    c_args: warning_args,
+)
+test('derived_expr', derived_expr_test)
 
 # twinwave
 
