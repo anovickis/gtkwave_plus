@@ -22,7 +22,7 @@ See also: [[Window Overview]], [[Signal Popover]], [[Keyboard Shortcuts]]
 ## Window Overview
 keywords: window, layout, panes, sst, hierarchy, signal list, wave pane, toolbar, from, to, marker, cursor
 The main window has four areas.
-- **SST (top left)**: the design hierarchy as a tree of scopes. Select a scope to see its signals.
+- **SST (top left)**: the design hierarchy as a tree of scopes. Select a scope to see its signals. Right-clicking a scope offers **Recurse Import** (add everything inside it) and **Add as Struct** (for a struct, union or record; see [[Structs and Unions]]).
 - **Signal list (below the SST)**: the signals in the selected scope, with **Append**, **Insert** and **Replace** buttons that add the highlighted ones to the waveform.
 - **Name column and wave pane (right)**: the displayed signals and their values over time. A time ruler runs along the top.
 - **Toolbar**: cut/copy/paste, zoom, time navigation, and the **From** and **To** boxes that set the visible time range. The **Marker** and **Cursor** readouts on the right show the times of the primary marker and of the pointer.
@@ -50,7 +50,7 @@ Right-click a signal name in the name column and choose **Quick Format...**. It 
 - **Event Report**: see [[Signal Event Report]].
 - **Event Sequence**: see [[Event Sequence]].
 - **Derived Signal...**: see [[Derived Signals]].
-- **Bus Operations**: **Create Bus (Down)**, **Create Bus (Up)**, **Expand as Sub-Bus...**, **Reverse Bit Order**, **Edit Bus Composition...**; see [[Bus Operations]].
+- **Bus Operations**: **Create Bus (Down)**, **Create Bus (Up)**, **Expand as Sub-Bus...**, **Reverse Bit Order**, **Edit Bus Composition...**, **Define Struct Fields...**; see [[Bus Operations]] and [[Defining Struct Fields]].
 
 See also: [[Window Overview]], [[Configuring HDL Sources]]
 
@@ -227,9 +227,69 @@ Build and reshape multi-bit signals from the [[Signal Popover]]'s **Bus Operatio
 - **Expand as Sub-Bus...** slices a contiguous bit range out of a bus into its own narrower bus. Enter the range in the dialog.
 - **Reverse Bit Order** flips the bit order of the bus display (a toggle).
 - **Edit Bus Composition...** shows the bus's bits. **Move Up**, **Move Down** and **Remove** change the selected bit; **Add Bit...** accepts a signal path (a single-bit signal; not another bus). **Apply** creates a new bus named `<original>_edited` and leaves the original alone.
+- **Define Struct Fields...** divides a bus carrying a packed struct into named fields; see [[Defining Struct Fields]].
 - **Edit > Expand** (F3) splits a bus into its individual bits.
 
-See also: [[Undo and Redo]], [[Derived Signals]]
+See also: [[Defining Struct Fields]], [[Undo and Redo]], [[Derived Signals]]
+
+## Structs and Unions
+keywords: struct, union, record, packed, unpacked, fields, add as struct, trace-structs, verilator, systemverilog, aggregate, nested, sst, scope
+Shows a struct, union or VHDL record as one expandable item instead of a pile of loose signals.
+
+### When it applies
+The dump itself has to say the scope is a struct. Some simulators only do that when asked; for Verilator, trace with `--trace-structs`. Without that, a packed struct reaches GTKWave as a plain wide bus with no field information; see [[Defining Struct Fields]] for that case. In the hierarchy a struct scope looks like any other scope, so the quickest check is whether **Add as Struct** works on it (the status bar says so if it isn't one).
+
+### Using it
+1. In the hierarchy (SST), right-click the struct, union or record scope.
+2. Choose **Add as Struct**, then either **Packed Value + Fields** or **Fields Only**, then where to put it: **Append**, **Insert** (after the highlighted trace) or **Replace** (the highlighted traces), the same choice **Recurse Import** offers.
+
+### The two forms
+- **Packed Value + Fields** adds a group whose header row is a real bus carrying the whole struct's value, first field in the most significant bits, with the fields inside. Collapsed (**Edit > Toggle Group Open|Close**, T) you see the one packed value; expanded you also see each field.
+- **Fields Only** adds a plain named group of the fields, with no combined value.
+
+Neither FST nor VCD records whether a struct was packed, and an unpacked struct has no single meaningful value, so which form to use is your choice: use Packed Value for packed structs.
+
+### Nesting, unions and records
+- A nested struct becomes a nested group, with its own packed value if you chose Packed Value.
+- A union's fields overlay the same bits, so a union is always a plain group. Inside a packed struct, a union contributes the bits of its widest member.
+- A VHDL record is always a plain group of its fields.
+
+### Details
+- Fields appear in the order they were declared, which is the bit order of a packed struct. GTKWave's own hierarchy list is alphabetical, so the order is recovered by re-reading the dump's header for that scope (FST, VCD and gzipped VCD; not GHW, and not a dump read from standard input).
+- The result is made of ordinary groups, buses and signals, so everything else works on it: colors, radix, **Undo**, **Create Group** and save files.
+- Hex shows a bus whose width is not a multiple of 4 right-aligned, so a 13-bit value reads like `0207`.
+
+### Limits
+- A member that is not plain bits (a real or string), another kind of scope inside the struct, or a struct wider than 32768 bits cannot be packed; that struct is shown as a group of its fields instead, with a note.
+- A member missing from the loaded dump is left out, with a note.
+
+See also: [[Defining Struct Fields]], [[Groups and Group Manager]], [[Bus Operations]]
+
+## Defining Struct Fields
+keywords: define struct fields, packed struct, flattened, fields, bit fields, layout, bus, op:4, padding, subfields, unpack, bitfield
+For a packed struct that reached GTKWave as one wide bus (the dump has no field information), you describe the fields yourself and the bus becomes an expandable group.
+
+### Using it
+1. Right-click the bus, **Quick Format...**, and in **Bus Operations** click **Define Struct Fields...**.
+2. Type the layout. The first field is in the most significant bits:
+   - `op:4 imm:8 valid:1` gives widths, running down from the top of the bus.
+   - `op[12:9] imm[8:1] valid[0]` gives explicit bit positions, where bit 0 is the bus's least significant bit.
+   - A field named `_` is padding: it takes up bits but is not shown.
+3. Fields are separated by spaces, commas or new lines. Use one style, not both.
+4. The dialog shows the fields it understood, or exactly what is wrong (a layout wider than the bus, overlapping or repeated names, a bit outside the bus). **Create** is enabled only for a layout it accepts.
+5. Optionally fill in **Group name**; otherwise the bus keeps its own name.
+6. Click **Create**.
+
+### What you get
+The bus itself stays as the group's header row, so collapsed it still shows the whole value, and inside it each field is its own trace: a one-bit field is a plain signal, a wider one is a bus. **Edit > Undo** puts the original bus back.
+
+### Notes
+- Bits not covered by any field are reported in the preview and simply not shown.
+- The dialog remembers the layout you used last, since the same struct type often appears on several signals.
+- For a nested struct, apply Define Struct Fields again to one of the new field buses.
+- Like any group, the result is saved in save files and survives **Reload Waveform**.
+
+See also: [[Structs and Unions]], [[Bus Operations]], [[Undo and Redo]]
 
 ## Undo and Redo
 keywords: undo, redo, ctrl+z, history, restore, delete, ungroup, combine, expand
@@ -608,6 +668,7 @@ Common messages and what to do.
 - **Dashed box in the RTL schematic**: a signal the tool named but could not resolve to a path.
 - **"Couldn't expand ..."**: the net was renamed or removed ([[Expanding the Cone Net by Net]]).
 - **Derived signal errors**: see [[Derived Signal Expression Language]].
+- **"isn't a struct, union or record scope"**: the dump doesn't mark that scope as a struct (for Verilator, trace with `--trace-structs`). If the struct came through as a plain bus, use [[Defining Struct Fields]].
 
 See also: [[Known Limitations]]
 
@@ -621,5 +682,6 @@ Gathered from the topics above.
 - **Gate-level schematic**: needs synthesizable RTL; dissolving an instance cannot show its whole interior automatically, so expand its ports individually; expansions and filters last as long as the window.
 - **Schematic layout**: simple redrawn curves; only the RTL view; needs SVG support in gdk-pixbuf.
 - **Compress Time Range**: needs both markers.
+- **Structs**: **Add as Struct** needs the dump to record the struct (Verilator: `--trace-structs`); field order is read from FST or VCD headers, not GHW; whether a struct is packed is your choice. **Define Struct Fields** divides one level at a time and only a bus, not a group.
 
 See also: [[Troubleshooting Netlist Features]]

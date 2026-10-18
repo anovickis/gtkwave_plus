@@ -22,6 +22,14 @@ int treebox_is_active(void);
 void DND_helper_quartz(char *data);
 
 void recurse_import(GtkWidget *widget, guint callback_action);
+
+// Places new traces according to `mode` (WV_RECURSE_APPEND / _INSERT /
+// _REPLACE, the same Append/Insert/Replace choice Recurse Import offers).
+// `fill` adds the traces, appending them to GLOBALS->traces as though it
+// were the whole list; for Insert and Replace an empty list is swapped in
+// around it and the result pasted after / over the highlighted traces.
+typedef void (*SstImportFill)(gpointer data);
+void sst_import_in_mode(guint mode, SstImportFill fill, gpointer data);
 #define WV_RECURSE_IMPORT_WARN (0)
 
 enum sst_cb_action

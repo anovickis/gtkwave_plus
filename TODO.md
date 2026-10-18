@@ -1023,6 +1023,62 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   but confirmed that doesn't help either, since the renaming/elimination
   happens *during* `submod` itself, not before it.
 
+- **Struct / union display** ("Add as Struct" in the SST right-click menu, and
+  "Define Struct Fields..." in the signal popover). Two complementary paths,
+  because what a dump records about structs varies:
+  * **What the dumps actually contain** (checked, not assumed). None of this
+    repo's 12 FST files has a struct scope. A real Verilator 5.040 dump has
+    STRUCT/UNION scopes only if asked: by default only an *unpacked* struct
+    becomes a scope and packed structs/unions arrive as plain wide buses
+    (`instr [12:0]`); with `--trace-structs` every struct and union is a
+    scope, nested ones included, holding its member signals -- and the
+    aggregate vector is then NOT emitted at all. FST's PACK/ARRAY attributes
+    are never written, so packed-vs-unpacked is unrecorded. gtkwave's loader
+    keeps the scope kind but the SST is sorted alphabetically, so the
+    declaration order (= a packed struct's bit order) is lost in memory.
+  * **Add as Struct** (`struct_group.c`): right-click a struct/union/record
+    scope -> Packed Value + Fields | Fields Only -> Append | Insert | Replace
+    (the same placement choice Recurse Import has; its three callbacks were
+    refactored onto one `sst_import_in_mode()`, behavior checked in all three
+    modes before and after). Builds a group of the fields in declaration order
+    (recovered by re-reading the dump header for just that scope --
+    `struct_scope.c`, FST/VCD/gz-VCD), nested structs as nested groups. Packed
+    Value makes the header row a real bus of the concatenated fields, so
+    collapsed it shows the whole value and expanded the fields, the same shape
+    Expand gives a bus; a union is a plain group (a union inside a packed
+    struct contributes its widest member); a VHDL record is a plain group.
+  * **Define Struct Fields** (`struct_fields.c`, `bus_ops.c`): for a flattened
+    bus, type `op:4 imm:8 valid:1` (widths from the top) or `op[12:9] ...`
+    (explicit bits, `_` = padding); live preview/validation in the dialog. The
+    bus stays as the group header, each field is a slice (one bit = a plain
+    signal). Undoable; remembers the last layout. Reuses and shares the
+    sub-bus slicing code (refactored out of Expand as Sub-Bus).
+  * **Verified live** (headless gtkwave against real Verilator dumps): every
+    packed aggregate equals the concatenation of its fields at every change
+    (`instr`, nested `ctx`/`inst`, a union's `bytes`; 0 mismatches over 14
+    regions each), hex shows `0207`/`040C` for hand-checked values, a full
+    Reload reproduces the structure and values, Undo restores a divided bus,
+    Insert/Replace place correctly, a module scope is refused cleanly, and a
+    bad layout disables Create with the exact reason. 3 new GTK-free test
+    suites (declaration order on FST, VCD and gz-VCD incl. an alphabetical
+    trap and a bracketed scope name; the field-layout parser; all
+    Valgrind-clean) -- which caught a real bug (array-element scope `arr[0]`
+    had its "range" stripped).
+  * **Bugs found on the way:** the new traces first lost right-justification
+    because replacing (instead of extending) `default_flags` dropped
+    `TR_RJUSTIFY`, so a 13-bit hex bus read `1038` instead of `0207`; and
+    `combine_traces()` silently needs the trace highlighted (the popover always
+    does, a caller shouldn't have to).
+  **Known gaps:** "Add as Struct" needs the dump to record the struct (only
+  Verilator tested; VCS untested); VCD struct support is verified against a
+  hand-written header, not a real simulator's VCD; packed-vs-unpacked is the
+  user's choice (the formats don't say); a member that isn't plain bits, another
+  scope inside a struct, or more than 32768 bits falls back to a plain group
+  with a note; GHW unsupported; Define Struct Fields is one flat level per use
+  (apply again to a field for nesting); Insert after a highlighted group header
+  lands inside that group; bits not covered by a field/padding in a native bus
+  leak their throwaway expanded nodes (bounded, the existing Sub-Bus trade-off).
+
 - **Help > Features and Usage** (Shift+F1): an indexed, searchable guide to
   every feature in this build. The source of truth is one plain-text file,
   `share/help/features.md` (also installed under `help/` in the data dir, so
@@ -1264,13 +1320,8 @@ the conversation history for the full reasoning behind this ordering.
 1. **Waveform Compare / structured two-run diffing.** One of the most-
    requested Verdi/nWave parity features. Big lift, big payoff.
 
-2. **Struct/union display** (expandable field tree). **Derived/virtual
-   signal expressions** are done -- see the Done section above. Struct display
-   is still open: no urgent driver, and a design question first -- structs
-   reach gtkwave flattened into plain wide buses (see item 7), so a field tree
-   needs either the dump format to carry the layout (FST has struct/union
-   scope types and attribute records worth checking) or user-supplied field
-   definitions.
+2. ~~**Struct/union display**~~ and ~~**derived/virtual signal expressions**~~
+   -- both done, see the Done section above.
 
 3. ~~**Gate-level schematic "Cone Window"**~~ -- per-net Start small /
    Expand is done, see the Done section above (Dissolve, Filter Out and the

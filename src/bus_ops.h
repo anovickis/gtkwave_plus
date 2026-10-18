@@ -27,3 +27,11 @@ void bus_ops_reverse_bit_order(GwTrace *t);
 // Expand-as-Sub-Bus above). No-ops with a status message if `t` isn't a
 // bus (multi-bit) signal.
 void bus_ops_show_edit_composition_dialog(GwTrace *t);
+
+// Opens a dialog to describe the fields of a packed struct carried by a bus
+// the dump itself knows nothing about (e.g. `instr [12:0]`): "op:4 imm:8
+// valid:1", or explicit bit ranges. On confirmation the bus becomes a group:
+// the bus is still the header row, showing the whole value, and each field is
+// a trace inside it. Undoable. No-ops with a status message if `t` isn't a
+// plain multi-bit signal.
+void bus_ops_show_define_fields_dialog(GwTrace *t);

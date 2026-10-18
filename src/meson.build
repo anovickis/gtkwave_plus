@@ -79,6 +79,9 @@ gtkwave_sources = [
     'source_panel.c',
     'status.c',
     'strace.c',
+    'struct_fields.c',
+    'struct_group.c',
+    'struct_scope.c',
     'symbol.c',
     'time_compress.c',
     'time_span_comments.c',
@@ -195,6 +198,22 @@ help_doc_test = executable(
 test('help_doc', help_doc_test,
      args: [meson.project_source_root() / 'share/help/features.md',
             meson.project_source_root() / 'src/menu.c'])
+
+struct_scope_test = executable(
+    'struct_scope_test',
+    ['struct_scope.c', 'struct_scope_test.c'],
+    dependencies: [glib_dep, libfst_dep],
+    c_args: warning_args,
+)
+test('struct_scope', struct_scope_test)
+
+struct_fields_test = executable(
+    'struct_fields_test',
+    ['struct_fields.c', 'struct_fields_test.c'],
+    dependencies: [glib_dep],
+    c_args: warning_args,
+)
+test('struct_fields', struct_fields_test)
 
 # twinwave
 

@@ -15,6 +15,7 @@
 
 #include "auto_update.h"
 #include "help_view.h"
+#include "struct_group.h"
 #include "globals.h"
 #include <config.h>
 #include <string.h>
@@ -4205,6 +4206,52 @@ void menu_open_sst_hierarchy_isource(gpointer null_data, guint callback_action, 
 
 /**/
 
+// The SST popup's "Add as Struct" entries. callback_action is one of
+// WV_RECURSE_APPEND/_INSERT/_REPLACE, ORed with STRUCT_PACKED_VALUE for the
+// "Packed Value + Fields" variants.
+#define STRUCT_PACKED_VALUE 0x10
+
+void menu_struct_import(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)widget;
+
+    GwTreeNode *node = GLOBALS->sst_sig_root_treesearch_gtk2_c_1;
+    if (node == NULL || GLOBALS->selected_hierarchy_name == NULL) {
+        status_text("Select a struct, union or record scope in the hierarchy first.\n");
+        return;
+    }
+
+    StructMemberKind kind;
+    if (!struct_group_kind_from_tree_kind(node->kind, &kind)) {
+        gchar *msg = g_strdup_printf(
+            "'%s' isn't a struct, union or record scope. (The dump must record it as one: for "
+            "Verilator, trace with --trace-structs.)\n",
+            node->name);
+        status_text(msg);
+        g_free(msg);
+        return;
+    }
+
+    // selected_hierarchy_name is the full path with a trailing delimiter.
+    gchar *path = g_strdup(GLOBALS->selected_hierarchy_name);
+    gsize len = strlen(path);
+    if (len > 0 && path[len - 1] == GLOBALS->hier_delimeter) {
+        path[len - 1] = '\0';
+    }
+
+    GError *error = NULL;
+    if (!struct_group_add(path, kind, callback_action & ~(guint)STRUCT_PACKED_VALUE,
+                          (callback_action & STRUCT_PACKED_VALUE) != 0, &error)) {
+        gchar *msg = g_strdup_printf("Couldn't add '%s' as a struct: %s\n", path,
+                                     error != NULL ? error->message : "unknown error");
+        status_text(msg);
+        g_free(msg);
+        g_clear_error(&error);
+    }
+    g_free(path);
+}
+
 void menu_recurse_import(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
     (void)null_data;
@@ -6331,6 +6378,38 @@ static gtkwave_mlist_t sst_popmenu_items[] = {
     WAVE_GTKIFE("/Recurse Import/Append", NULL, menu_recurse_import, WV_RECURSE_APPEND, "<Item>"),
     WAVE_GTKIFE("/Recurse Import/Insert", NULL, menu_recurse_import, WV_RECURSE_INSERT, "<Item>"),
     WAVE_GTKIFE("/Recurse Import/Replace", NULL, menu_recurse_import, WV_RECURSE_REPLACE, "<Item>"),
+
+    // For a struct / union / record scope: its fields as one expandable group.
+    WAVE_GTKIFE("/Add as Struct/Packed Value + Fields/Append",
+                NULL,
+                menu_struct_import,
+                WV_RECURSE_APPEND | STRUCT_PACKED_VALUE,
+                "<Item>"),
+    WAVE_GTKIFE("/Add as Struct/Packed Value + Fields/Insert",
+                NULL,
+                menu_struct_import,
+                WV_RECURSE_INSERT | STRUCT_PACKED_VALUE,
+                "<Item>"),
+    WAVE_GTKIFE("/Add as Struct/Packed Value + Fields/Replace",
+                NULL,
+                menu_struct_import,
+                WV_RECURSE_REPLACE | STRUCT_PACKED_VALUE,
+                "<Item>"),
+    WAVE_GTKIFE("/Add as Struct/Fields Only/Append",
+                NULL,
+                menu_struct_import,
+                WV_RECURSE_APPEND,
+                "<Item>"),
+    WAVE_GTKIFE("/Add as Struct/Fields Only/Insert",
+                NULL,
+                menu_struct_import,
+                WV_RECURSE_INSERT,
+                "<Item>"),
+    WAVE_GTKIFE("/Add as Struct/Fields Only/Replace",
+                NULL,
+                menu_struct_import,
+                WV_RECURSE_REPLACE,
+                "<Item>"),
 
 #if !defined __MINGW32__
     WAVE_GTKIFE("/Open Source Definition",

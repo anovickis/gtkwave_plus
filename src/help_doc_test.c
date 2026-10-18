@@ -426,6 +426,11 @@ static void test_real_document_features_are_findable(void)
         {"save file", "Save Files and Sessions"},
         {"source panel", "Source Panel"},
         {"sub-bus", "Bus Operations"},
+        {"add as struct", "Structs and Unions"},
+        {"trace-structs", "Structs and Unions"},
+        {"union", "Structs and Unions"},
+        {"define struct fields", "Defining Struct Fields"},
+        {"packed struct bus", "Defining Struct Fields"},
     };
     for (guint i = 0; i < G_N_ELEMENTS(expect); i++) {
         const HelpTopic *t = top_hit(doc, expect[i].query);

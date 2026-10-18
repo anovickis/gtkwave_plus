@@ -1631,36 +1631,27 @@ static void add_nodes(GwFacs *facs, gint low, gint high)
     }
 }
 
-static void recurse_append_callback(GwFacs *facs, gint low, gint high)
+// Everything that adds traces for an import runs through one of these,
+// which differ only in WHERE the new traces end up (end of the list, after
+// the highlighted trace, or in place of the highlighted traces). `fill`
+// appends the new traces to GLOBALS->traces as if it were the whole list;
+// the Insert and Replace variants swap an empty list in around it first.
+static void append_with(SstImportFill fill, gpointer data)
 {
-    select_vec_roots(facs, low, high);
-
-    if (GLOBALS->is_lx2) {
-        import_lx2(facs, low, high);
-    }
-
-    add_nodes(facs, low, high);
+    fill(data);
 
     gw_signal_list_scroll_to_trace(GW_SIGNAL_LIST(GLOBALS->signalarea), GLOBALS->traces.last);
     redraw_signals_and_waves();
 }
 
-static void recurse_insert_callback(GwFacs *facs, gint low, gint high)
+static void insert_with(SstImportFill fill, gpointer data)
 {
     Traces tcache;
     memcpy(&tcache, &GLOBALS->traces, sizeof(Traces));
     GLOBALS->traces.total = 0;
     GLOBALS->traces.first = GLOBALS->traces.last = NULL;
 
-    select_vec_roots(facs, low, high);
-
-    /* LX2 */
-    if (GLOBALS->is_lx2) {
-        import_lx2(facs, low, high);
-    }
-    /* LX2 */
-
-    add_nodes(facs, low, high);
+    fill(data);
 
     GLOBALS->traces.buffercount = GLOBALS->traces.total;
     GLOBALS->traces.buffer = GLOBALS->traces.first;
@@ -1678,7 +1669,7 @@ static void recurse_insert_callback(GwFacs *facs, gint low, gint high)
     redraw_signals_and_waves();
 }
 
-static void recurse_replace_callback(GwFacs *facs, gint low, gint high)
+static void replace_with(SstImportFill fill, gpointer data)
 {
     Traces tcache;
     int i;
@@ -1689,13 +1680,7 @@ static void recurse_replace_callback(GwFacs *facs, gint low, gint high)
     GLOBALS->traces.total = 0;
     GLOBALS->traces.first = GLOBALS->traces.last = NULL;
 
-    select_vec_roots(facs, low, high);
-
-    if (GLOBALS->is_lx2) {
-        import_lx2(facs, low, high);
-    }
-
-    add_nodes(facs, low, high);
+    fill(data);
 
     tfirst = GLOBALS->traces.first;
     tlast = GLOBALS->traces.last; /* cache for highlighting */
@@ -1766,6 +1751,37 @@ static void recurse_replace_callback(GwFacs *facs, gint low, gint high)
     redraw_signals_and_waves();
 }
 
+typedef struct
+{
+    GwFacs *facs;
+    gint low, high;
+} RecurseRange;
+
+// What Recurse Import adds: every signal in the facs range [low, high].
+static void recurse_fill(gpointer data)
+{
+    const RecurseRange *r = data;
+
+    select_vec_roots(r->facs, r->low, r->high);
+
+    if (GLOBALS->is_lx2) {
+        import_lx2(r->facs, r->low, r->high);
+    }
+
+    add_nodes(r->facs, r->low, r->high);
+}
+
+void sst_import_in_mode(guint mode, SstImportFill fill, gpointer data)
+{
+    if (mode == WV_RECURSE_INSERT) {
+        insert_with(fill, data);
+    } else if (mode == WV_RECURSE_REPLACE) {
+        replace_with(fill, data);
+    } else { // WV_RECURSE_APPEND
+        append_with(fill, data);
+    }
+}
+
 static void recurse_fetch_high_low(GwTreeNode *t, gint *low, gint *high)
 {
 top:
@@ -1833,13 +1849,8 @@ void recurse_import(GtkWidget *widget, guint callback_action)
 
     GwFacs *facs = gw_dump_file_get_facs(GLOBALS->dump_file);
 
-    if (callback_action == WV_RECURSE_INSERT) {
-        recurse_insert_callback(facs, low, high);
-    } else if (callback_action == WV_RECURSE_REPLACE) {
-        recurse_replace_callback(facs, low, high);
-    } else { // WV_RECURSE_APPEND
-        recurse_append_callback(facs, low, high);
-    }
+    RecurseRange range = {.facs = facs, .low = low, .high = high};
+    sst_import_in_mode(callback_action, recurse_fill, &range);
 
     set_window_idle(widget);
 }

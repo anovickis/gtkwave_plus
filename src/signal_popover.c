@@ -310,6 +310,15 @@ static void on_expand_subbus_clicked(GtkButton *button, gpointer user_data)
     bus_ops_show_expand_subbus_dialog(t);
 }
 
+static void on_define_fields_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    close_ancestor_popover(GTK_WIDGET(button));
+    bus_ops_show_define_fields_dialog(t);
+}
+
 static void on_reverse_bit_order_clicked(GtkButton *button, gpointer user_data)
 {
     (void)user_data;
@@ -507,6 +516,15 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
         edit_composition_button,
         "Reorder, add, or remove this bus's constituent bits into a new bus");
     gtk_box_pack_start(GTK_BOX(box), edit_composition_button, FALSE, FALSE, 0);
+
+    GtkWidget *define_fields_button = gtk_button_new_with_label("Define Struct Fields\xe2\x80\xa6");
+    g_signal_connect(
+        define_fields_button, "clicked", G_CALLBACK(on_define_fields_clicked), NULL);
+    gtk_widget_set_tooltip_text(
+        define_fields_button,
+        "Describe the fields of a packed struct carried by this bus (e.g. op:4 imm:8 valid:1). "
+        "The bus becomes a group: the whole value on the header row, each field inside it.");
+    gtk_box_pack_start(GTK_BOX(box), define_fields_button, FALSE, FALSE, 0);
 
     gtk_container_add(GTK_CONTAINER(popover), box);
     gtk_widget_show_all(box);
