@@ -1023,6 +1023,42 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   but confirmed that doesn't help either, since the renaming/elimination
   happens *during* `submod` itself, not before it.
 
+- **Help > Features and Usage** (Shift+F1): an indexed, searchable guide to
+  every feature in this build. The source of truth is one plain-text file,
+  `share/help/features.md` (also installed under `help/` in the data dir, so
+  it can be read outside the program), embedded as a GResource. 36 topics in
+  7 categories (Getting Started, Viewing and Navigation, Organizing Signals,
+  Finding Problems, Design Analysis, Live Dumps and Automation,
+  Troubleshooting), each with a purpose, where to find it, usage steps, notes
+  and limits, cross-linked with `[[Topic]]` references.
+  * **Engine** (`src/help_doc.c`, GTK-free): parses the document and builds a
+    word index. Search is all-words-must-match with prefix matching;
+    title hits outrank keyword, heading, and body hits; a plural counts as an
+    exact word; a query that appears as a phrase in a title gets a bonus
+    weighted toward shorter (more specific) titles. Results carry a
+    markup-free excerpt around the first match.
+  * **Window** (`src/help_view.c`): topic index grouped by category, or
+    ranked results with excerpts while searching (the best match opens at
+    once), search terms highlighted in the text, clickable cross-references,
+    Back/Forward (Alt+Left/Right), Ctrl+F, and Escape (clears the search, then
+    closes).
+  * **Kept honest by tests** (`src/help_doc_test.c`, 12 tests, Valgrind-
+    clean): every topic parses and has keywords; every `[[link]]` resolves;
+    31 feature names each find their own topic first; and every
+    `**Menu > Item**` and `(shortcut)` the guide states is checked against the
+    real menu table in `menu.c`. Deliberately breaking the document (wrong
+    shortcut, nonexistent menu item, dead link, thin keywords) each fails the
+    suite -- so the guide cannot drift from the program unnoticed. **When you
+    add or change a feature, update `share/help/features.md`; the tests will
+    tell you if a menu path or shortcut it names stops being true.**
+  * Shift+F1, not F1: plain F1 is already Time > Move To Time.
+  * **Found while writing it:** the RTL schematic window (and so the Move
+    Nodes / Reset Layout editing built for it) had no entry point in the UI at
+    all -- "Show Cone of Logic" was deliberately repointed at the gate-level
+    view and nothing else called it. Added a separate **RTL Schematic** button
+    to the signal popover (leaving "Show Cone of Logic" on the gate-level
+    view). Remove that one button if the RTL view isn't wanted there.
+
 - **Derived / virtual signals** (signal popover -> "Derived Signal..."). A
   Verilog-flavoured expression over existing signals, evaluated across the
   whole dump into a new history and shown as an ordinary signal -- radix,

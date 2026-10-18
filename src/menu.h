@@ -296,6 +296,7 @@ enum WV_MenuItems
     WV_MENU_TDSCALEN,
     WV_MENU_TDSCALEP,
     WV_MENU_TDSCALEF,
+    WV_MENU_HHELP,
 #ifdef MAC_INTEGRATION
     WV_MENU_HWM,
 #endif

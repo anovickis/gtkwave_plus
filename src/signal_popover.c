@@ -14,6 +14,7 @@
 #include "netlist_query_ui.h"
 #include "signal_event_report.h"
 #include "event_sequence_view.h"
+#include "schematic_view.h"
 #include "derived_signals.h"
 #include "status.h"
 
@@ -257,6 +258,25 @@ static void on_show_schematic_clicked(GtkButton *button, gpointer user_data)
     g_free(signal_path);
 }
 
+// "RTL Schematic" -- the pre-synthesis dataflow view (schematic_view.c):
+// Assignment/Conditional/Case nodes with live values at the marker, edge
+// coloring, Prev/Next Transition, and hand-movable boxes (Move Nodes). A
+// separate button from "Show Cone of Logic", which deliberately opens the
+// gate-level view instead.
+static void on_show_rtl_schematic_clicked(GtkButton *button, gpointer user_data)
+{
+    GwTrace *t = find_target_trace();
+    close_ancestor_popover(GTK_WIDGET(button));
+
+    if (t == NULL) {
+        status_text("GTKWAVE | Select a signal first to show its RTL schematic.\n");
+        return;
+    }
+    gchar *signal_path = build_query_signal_path(t, GTK_ENTRY(user_data));
+    netlist_query_show_schematic(signal_path);
+    g_free(signal_path);
+}
+
 static void on_show_event_report_clicked(GtkButton *button, gpointer user_data)
 {
     (void)user_data;
@@ -414,6 +434,14 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     gtk_box_pack_start(GTK_BOX(netlist_box), schematic_button, TRUE, TRUE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), netlist_box, FALSE, FALSE, 0);
+
+    GtkWidget *rtl_button = gtk_button_new_with_label("RTL Schematic");
+    gtk_widget_set_tooltip_text(
+        rtl_button,
+        "Pre-synthesis dataflow diagram of the signal's fan-in, with live values at the marker. "
+        "Boxes can be rearranged (Move Nodes).");
+    g_signal_connect(rtl_button, "clicked", G_CALLBACK(on_show_rtl_schematic_clicked), range_entry);
+    gtk_box_pack_start(GTK_BOX(box), rtl_button, FALSE, FALSE, 0);
 
     GtkWidget *event_report_button = gtk_button_new_with_label("Event Report");
     g_signal_connect(

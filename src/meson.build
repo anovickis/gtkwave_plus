@@ -39,6 +39,8 @@ gtkwave_sources = [
     'gw-mouseover.c',
     'gw-named-marker-dialog.c',
     'gw-time-display.c',
+    'help_doc.c',
+    'help_view.c',
     'gw-wave-view-traces.c',
     'gw-wave-view.c',
     'list_x_view.c',
@@ -183,6 +185,16 @@ derived_expr_test = executable(
     c_args: warning_args,
 )
 test('derived_expr', derived_expr_test)
+
+help_doc_test = executable(
+    'help_doc_test',
+    ['help_doc.c', 'help_doc_test.c'],
+    dependencies: [glib_dep],
+    c_args: warning_args,
+)
+test('help_doc', help_doc_test,
+     args: [meson.project_source_root() / 'share/help/features.md',
+            meson.project_source_root() / 'src/menu.c'])
 
 # twinwave
 

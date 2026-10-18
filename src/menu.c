@@ -14,6 +14,7 @@
  */
 
 #include "auto_update.h"
+#include "help_view.h"
 #include "globals.h"
 #include <config.h>
 #include <string.h>
@@ -1019,6 +1020,15 @@ void menu_help_manual(gpointer null_data, guint callback_action, GtkWidget *widg
     simplereqbox("Wave User's Guide", 400, "Could not open PDF!", "OK", NULL, NULL, 1);
 }
 #endif
+/**/
+void menu_help_features(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    help_view_show(NULL);
+}
 /**/
 void menu_version(gpointer null_data, guint callback_action, GtkWidget *widget)
 {
@@ -5740,6 +5750,8 @@ static gtkwave_mlist_t menu_items[] = {
                 "<ToggleItem>"),
 
 /* 130 */
+    // Shift+F1: plain F1 is already Time > Move To Time.
+    WAVE_GTKIFE("/Help/Features and Usage", "<Shift>F1", menu_help_features, WV_MENU_HHELP, "<Item>"),
 #ifdef MAC_INTEGRATION
     WAVE_GTKIFE("/Help/WAVE User Manual", NULL, menu_help_manual, WV_MENU_HWM, "<Item>"),
 #endif

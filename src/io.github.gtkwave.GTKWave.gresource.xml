@@ -8,6 +8,9 @@
     <gresource prefix="/io/github/gtkwave/GTKWave">
         <file>gtkwave.css</file>
     </gresource>
+    <gresource prefix="/io/github/gtkwave/GTKWave/help">
+        <file alias="features.md">../share/help/features.md</file>
+    </gresource>
     <gresource prefix="/io/github/gtkwave/GTKWave/icons/16x16/actions">
         <file alias="gtkwave-hierarchy-module.png">../share/icons/old_icons/gtkwave-old-chart_organisation.png</file>
         <file alias="gtkwave-hierarchy-task.png">../share/icons/old_icons/gtkwave-old-cog.png</file>
