@@ -1123,25 +1123,21 @@ the conversation history for the full reasoning behind this ordering.
     but needs a real new sub-timestamp data model; highest effort on
     this list.
 
-7. **Dense Block Drawing** (fast struct/MDA rendering) -- performance/
-    scale feature for struct-heavy designs. Investigated this session:
-    SystemVerilog struct/union signals aren't a distinct `GwVarType`
-    today -- they're flattened into ordinary wide-bitvector nodes and
-    drawn through the same `draw_hptr_trace_vector()`/`draw_vptr_trace()`
-    path as any other bus (`gw-wave-view-traces.c`), which already skips
-    drawing a text value (falls back to a plain colored block) once a
-    segment's pixel width drops below `GLOBALS->vector_padding` -- so the
-    "too narrow, simplify" precedent already exists, just not tuned as a
-    distinct "dense" mode. The TODO's actual ask is *performance* for
-    struct-heavy designs, though, and the current loop still issues one
-    draw call per history entry regardless of width; a real fix needs
-    pre-aggregating sub-pixel-width consecutive segments into batched
-    draws before the draw loop runs, inside a large (~300-line),
-    performance-critical, universally-used rendering function every bus
-    trace in every session goes through. Deferred as too high-risk for a
-    single self-contained patch to a hot path this central; a narrower,
-    purely-cosmetic threshold tweak was considered and rejected since it
-    wouldn't deliver the performance win the item actually asks for.
+7. **Dense Block Drawing** (fast struct/MDA rendering) -- largely
+    already covered; deprioritized. Struct/union signals aren't a
+    distinct `GwVarType` -- they're flattened into ordinary wide-bitvector
+    nodes drawn through `draw_hptr_trace_vector()`/`draw_vptr_trace()`
+    (`gw-wave-view-traces.c`). Correction to an earlier note here: the
+    loop does NOT issue one draw call per history entry. A segment that
+    collapses to zero pixels (`_x0 == _x1`) already skips ahead with
+    `bsearch_node()` to the next pixel (`WAVE_OPT_SKIP`), and text
+    conversion (`convert_ascii_vec`) only runs for segments wider than
+    `GLOBALS->vector_padding`. What remains is segments 1-4px wide, which
+    cost one or two `cairo_stroke` calls each; batching those strokes by
+    color is the only remaining win, and it touches a hot path every bus
+    trace uses. Not measured: `perf` is blocked here
+    (`perf_event_paranoid >= 2`). Revisit only with a profile showing a
+    real redraw bottleneck on a dense dump.
 
 8. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
