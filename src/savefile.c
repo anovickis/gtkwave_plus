@@ -9,6 +9,7 @@
 
 #include "globals.h"
 #include <config.h>
+#include "schematic_layout.h"
 #include "savefile.h"
 #include "lx2.h"
 #include "source_panel.h"
@@ -162,6 +163,9 @@ void write_save_helper(const char *savnam, FILE *wave)
     }
 
     fprintf(wave, "[timestart] %" GW_TIME_FORMAT "\n", GLOBALS->tims.start);
+
+    // Hand-made RTL schematic node positions (see schematic_layout.h).
+    schematic_layout_write(wave);
 
     get_window_size(&sz_x, &sz_y);
     if (!GLOBALS->ignore_savefile_size)
@@ -1436,6 +1440,8 @@ int parsewavline(char *w, char *alias, int depth)
                     }
                 }
             }
+        } else if (strcmp(w2, "schematic_offset") == 0) {
+            schematic_layout_read(w);
         } else if (strcmp(w2, "sst_expanded") == 0) {
             if (!GLOBALS->ignore_savefile_pane_pos) {
                 /* sst is expanded?  */

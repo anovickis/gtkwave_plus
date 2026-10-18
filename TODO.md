@@ -1023,6 +1023,49 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   but confirmed that doesn't help either, since the renaming/elimination
   happens *during* `submod` itself, not before it.
 
+- **RTL schematic layout editing** (schematic toolbar: Move Nodes / Reset
+  Layout). Per-node position overrides layered on top of Graphviz's own
+  layout: with "Move Nodes" on, left-drag any box (structural
+  Assignment/Conditional nodes included) and only that box moves; edges
+  touching it are redrawn, everything else stays exactly as Graphviz drew
+  it. Stored as an offset from where Graphviz put the node (so it survives
+  small automatic-layout changes), per root signal, process-wide (survives
+  closing/reopening the window and Auto Update reloads), written to/read
+  from save files (`[schematic_offset]` lines), and included in Export
+  Image. Never touches the default path: with nothing moved and Move Nodes
+  off, the diagram is still Graphviz's PNG, byte for byte as before.
+  Three things the design had to work around, all found by testing rather
+  than assumed:
+  * **Graphviz can't pin node positions here.** That needs neato/fdp, and
+    this machine (and plenty of installs) ships only the `dot` layout
+    plugin. So the edit is done on `dot -Tsvg` (`schematic_svg_edit.c`): a
+    moved node's group gets a `transform`, affected edges are re-drawn
+    between the new boxes (arrowhead, label and colour kept), and the
+    result is rasterized with the gdk-pixbuf SVG loader at an explicit pixel
+    size (no DPI guessing). The SVG is cached per refresh, so dragging
+    re-renders without spawning dot.
+  * **slang-netlist renumbers nodes on every run** (`N26` vs `N28` for the
+    same `count_q`), so a node id can't remember a position. Identity is a
+    structural key instead (`schematic_node_key.c`): Weisfeiler-Lehman
+    colour refinement over the FULL cone (so it doesn't change with the
+    depth limit). Verified live: after a drag, a fresh refresh renumbered
+    the nodes and the box stayed put; a save file loaded in a new process
+    reproduced identical positions under different ids.
+  * **Parallel edges collapsed onto one line** after a move (a signal and
+    its feedback share a node pair); found by looking at a render, fixed by
+    fanning them out sideways, with a regression test.
+  **Known gaps:** only the RTL (slang-netlist) schematic, not the Yosys
+  gate-level view; while Move Nodes is on, click-to-inspect, double-click
+  navigation and drag-to-waveform are off (the right-click menu still
+  works); redrawn edges are simple curves with no obstacle avoidance, and
+  untouched edges can pass behind a moved box; structurally identical
+  twin nodes are told apart by Graphviz's placement order, which isn't
+  guaranteed stable; the SVG path needs gdk-pixbuf's SVG loader (it falls
+  back to Graphviz's layout with a status message if missing) and its text
+  renders in a slightly different font than dot's PNG; a move that grows
+  the picture upward/leftward shifts the image under the pointer while
+  dragging (offsets stay correct); no undo beyond Reset Layout.
+
 - **Auto Update for FST** (File > Auto Update). Polls the loaded FST every
   2s and, when a still-running simulation has flushed new time to it,
   reloads in place through the existing File > Reload Waveform path
@@ -1152,17 +1195,7 @@ the conversation history for the full reasoning behind this ordering.
      of its own, since it's pre-synthesis and has no gates to black-box
      module instances around).
 
-4. **RTL schematic layout editing** (reposition instances by hand,
-   print/capture an edited layout). What's left of the original
-   "Editable schematic mode" bundle that the Cone Window plan above
-   doesn't cover -- needs a real editable-layout data model, since
-   Graphviz's auto-layout has no notion of a user-repositioned node.
-   Real standalone work, not a quick pickup. (Configurable color themes,
-   navigation-only "last view" undo, print/capture (Export Image), and
-   drag-to-wave-pane, all originally bundled in this item, are now done
-   -- see above. Zoom/pan was already done before this list existed.
-   Collapse/expand a module to a black box, also originally bundled
-   here, is now covered by item 3's dissolve mechanism instead.)
+4. ~~**RTL schematic layout editing**~~ -- done, see the Done section above.
 
 5. **Auto Update** -- FST done (see Done above). Remaining: VCD (its
     loader discards the id table after load, so a true incremental path is

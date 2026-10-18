@@ -58,6 +58,9 @@ gtkwave_sources = [
     'renderopt.c',
     'savefile.c',
     'gate_schematic_view.c',
+    'schematic_layout.c',
+    'schematic_node_key.c',
+    'schematic_svg_edit.c',
     'schematic_view.c',
     'search.c',
     'shiftbuttons.c',
@@ -142,6 +145,24 @@ auto_update_poll_test = executable(
     c_args: warning_args,
 )
 test('auto_update_poll', auto_update_poll_test)
+
+# schematic layout store + SVG editor unit tests (GTK-free: glib only)
+
+schematic_layout_test = executable(
+    'schematic_layout_test',
+    ['schematic_layout.c', 'schematic_svg_edit.c', 'schematic_layout_test.c'],
+    dependencies: [glib_dep, m_dep],
+    c_args: warning_args,
+)
+test('schematic_layout', schematic_layout_test)
+
+schematic_node_key_test = executable(
+    'schematic_node_key_test',
+    ['schematic_node_key.c', 'schematic_node_key_test.c'],
+    dependencies: [glib_dep],
+    c_args: warning_args,
+)
+test('schematic_node_key', schematic_node_key_test)
 
 # twinwave
 

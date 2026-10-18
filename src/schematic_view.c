@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "schematic_view.h"
+#include "schematic_layout.h"
+#include "schematic_node_key.h"
+#include "schematic_svg_edit.h"
 #include "globals.h"
 #include "netlist_query_ui.h"
 #include "signal_value_lookup.h"
@@ -23,7 +26,10 @@
 
 typedef struct
 {
-    gchar *id; /* Graphviz node id, e.g. "N22" */
+    gchar *id; /* Graphviz node id, e.g. "N22" -- NOT stable: slang-netlist
+                renumbers internal nodes on every run */
+    gchar *key; /* stable identity (schematic_node_key.h), used to remember a
+                 hand-made position across refreshes and sessions */
     gchar *label; /* original (pre-annotation) label text */
     gchar *full_path; /* resolved gtkwave signal path, or NULL if this is
                        a structural (Assignment/Conditional) node, OR if
@@ -48,6 +54,7 @@ static void schematic_node_info_free(gpointer data)
 {
     SchematicNodeInfo *node = data;
     g_free(node->id);
+    g_free(node->key);
     g_free(node->label);
     g_free(node->full_path);
     g_free(node);
@@ -86,6 +93,23 @@ typedef struct
     gdouble zoom; /* 1.0 = original size; click coordinates are divided by
                   this before hit-testing against `nodes`, which are always
                   in original (1.0 zoom) pixel space */
+
+    /* Hand-made layout (see schematic_layout.h). The diagram is drawn from
+       Graphviz's PNG as long as nothing is moved; once "Move Nodes" is on or
+       any override exists for this root, it's drawn from the SVG below with
+       the offsets applied instead. */
+    gboolean move_mode; /* left-drag moves nodes (instead of starting a
+                         drag-to-waveform gesture) */
+    GtkWidget *move_toggle;
+    gchar *base_svg; /* Graphviz's own `-Tsvg` of the current cone, unedited */
+    GHashTable *svg_nodes; /* id -> SchematicSvgNode*, Graphviz's own layout */
+    gdouble graph_w_pt, graph_h_pt; /* that layout's size, for SVG bounds */
+    gchar *moving_id; /* node being dragged, NULL when no move is underway */
+    gchar *moving_key; /* its stable key, what the override is stored under */
+    gchar *moving_label;
+    gdouble move_start_x, move_start_y; /* pointer at press, widget pixels */
+    gdouble move_base_dx, move_base_dy; /* node's offset at press, points */
+    gint64 last_preview_us; /* throttle for live re-render while dragging */
 } SchematicState;
 
 static void schematic_state_free(gpointer data)
@@ -106,6 +130,13 @@ static void schematic_state_free(gpointer data)
     }
     g_free(state->signal_path);
     g_free(state->drag_full_path);
+    g_free(state->base_svg);
+    if (state->svg_nodes != NULL) {
+        g_hash_table_unref(state->svg_nodes);
+    }
+    g_free(state->moving_id);
+    g_free(state->moving_key);
+    g_free(state->moving_label);
     g_free(state);
 }
 
@@ -664,7 +695,8 @@ static gboolean run_dot_to_png(const gchar *dot_text, gchar **out_png_path, GErr
 // be NULL) marks which node ids are depth-limit boundary nodes -- see
 // bfs_keep_within_depth().
 static GPtrArray *parse_plain_nodes(const gchar *plain_text, GHashTable *id_to_label,
-                                   GHashTable *leaf_to_path, GHashTable *boundary_ids)
+                                   GHashTable *leaf_to_path, GHashTable *boundary_ids,
+                                   GHashTable *node_keys)
 {
     GPtrArray *nodes = g_ptr_array_new_with_free_func(schematic_node_info_free);
     gdouble graph_h_in = 0.0;
@@ -687,6 +719,8 @@ static GPtrArray *parse_plain_nodes(const gchar *plain_text, GHashTable *id_to_l
 
             SchematicNodeInfo *info = g_new0(SchematicNodeInfo, 1);
             info->id = g_strdup(name);
+            const gchar *stable = node_keys != NULL ? g_hash_table_lookup(node_keys, name) : NULL;
+            info->key = g_strdup(stable != NULL ? stable : name);
             info->w = nw * SCHEMATIC_DPI;
             info->h = nh * SCHEMATIC_DPI;
             info->x = (cx - nw / 2.0) * SCHEMATIC_DPI;
@@ -716,6 +750,61 @@ static GPtrArray *parse_plain_nodes(const gchar *plain_text, GHashTable *id_to_l
     g_strfreev(lines);
 
     return nodes;
+}
+
+static gint compare_by_position(gconstpointer a, gconstpointer b)
+{
+    const SchematicNodeInfo *x = *(SchematicNodeInfo *const *)a;
+    const SchematicNodeInfo *y = *(SchematicNodeInfo *const *)b;
+    if (x->x != y->x) {
+        return x->x < y->x ? -1 : 1;
+    }
+    if (x->y != y->y) {
+        return x->y < y->y ? -1 : 1;
+    }
+    return 0;
+}
+
+// Structurally indistinguishable nodes (e.g. two identical parallel
+// branches) come out of schematic_node_keys() with the SAME key, which
+// would make them share one remembered position. Tell them apart by where
+// Graphviz placed them (left-to-right, then top-to-bottom) -- for truly
+// interchangeable nodes any consistent assignment draws the same picture.
+// Must run on the as-laid-out positions, before any override is applied.
+static void make_keys_unique(GPtrArray *nodes)
+{
+    if (nodes == NULL) {
+        return;
+    }
+    GHashTable *groups = g_hash_table_new_full(g_str_hash, g_str_equal, NULL,
+                                               (GDestroyNotify)g_ptr_array_unref);
+    for (guint i = 0; i < nodes->len; i++) {
+        SchematicNodeInfo *node = g_ptr_array_index(nodes, i);
+        GPtrArray *group = g_hash_table_lookup(groups, node->key);
+        if (group == NULL) {
+            group = g_ptr_array_new();
+            g_hash_table_insert(groups, node->key, group);
+        }
+        g_ptr_array_add(group, node);
+    }
+
+    GHashTableIter it;
+    gpointer k, v;
+    g_hash_table_iter_init(&it, groups);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+        GPtrArray *group = v;
+        if (group->len < 2) {
+            continue;
+        }
+        g_ptr_array_sort(group, compare_by_position);
+        for (guint i = 0; i < group->len; i++) {
+            SchematicNodeInfo *node = g_ptr_array_index(group, i);
+            gchar *unique = g_strdup_printf("%s#%u", node->key, i);
+            g_free(node->key);
+            node->key = unique;
+        }
+    }
+    g_hash_table_unref(groups);
 }
 
 static SchematicNodeInfo *find_node_at(GPtrArray *nodes, gdouble px, gdouble py)
@@ -805,6 +894,153 @@ static void show_node_context_menu(SchematicNodeInfo *node, GdkEventButton *even
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
 }
 
+// --- Hand-made layout (see schematic_layout.h) -------------------------
+//
+// With nothing moved, the diagram is Graphviz's own PNG, exactly as before.
+// Once "Move Nodes" is on, or this root already has overrides, it's drawn
+// from Graphviz's SVG with the overrides applied (schematic_svg_edit.h) --
+// Graphviz can't pin node positions without the neato/fdp plugins, which
+// plenty of installs don't have, so the SVG is edited directly instead.
+// The SVG is cached per refresh, so dragging re-renders without spawning dot.
+
+#define PX_PER_PT (SCHEMATIC_DPI / 72.0)
+#define PREVIEW_INTERVAL_US 25000
+
+static gboolean schematic_wants_svg(SchematicState *state)
+{
+    return state->move_mode || schematic_layout_count(state->signal_path) > 0;
+}
+
+static SchematicNodeInfo *find_node_by_id(GPtrArray *nodes, const gchar *id)
+{
+    if (nodes == NULL || id == NULL) {
+        return NULL;
+    }
+    for (guint i = 0; i < nodes->len; i++) {
+        SchematicNodeInfo *node = g_ptr_array_index(nodes, i);
+        if (g_str_equal(node->id, id)) {
+            return node;
+        }
+    }
+    return NULL;
+}
+
+// Overrides that apply to the CURRENT nodes: an entry whose recorded label
+// no longer matches (the design changed and renumbered nodes) is skipped.
+static GHashTable *collect_offsets(SchematicState *state)
+{
+    GHashTable *offsets = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    if (state->nodes == NULL) {
+        return offsets;
+    }
+    for (guint i = 0; i < state->nodes->len; i++) {
+        SchematicNodeInfo *node = g_ptr_array_index(state->nodes, i);
+        gdouble dx, dy;
+        if (schematic_layout_get(state->signal_path, node->key, node->label, &dx, &dy)) {
+            SchematicSvgOffset *off = g_new0(SchematicSvgOffset, 1);
+            off->dx = dx;
+            off->dy = dy;
+            g_hash_table_insert(offsets, g_strdup(node->id), off);
+        }
+    }
+    return offsets;
+}
+
+static GdkPixbuf *pixbuf_from_svg(const gchar *svg, GError **error)
+{
+    GdkPixbufLoader *loader = gdk_pixbuf_loader_new_with_mime_type("image/svg+xml", error);
+    if (loader == NULL) {
+        return NULL;
+    }
+    GdkPixbuf *pixbuf = NULL;
+    if (gdk_pixbuf_loader_write(loader, (const guchar *)svg, strlen(svg), error) &&
+        gdk_pixbuf_loader_close(loader, error)) {
+        pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
+        if (pixbuf != NULL) {
+            g_object_ref(pixbuf);
+        }
+    } else {
+        gdk_pixbuf_loader_close(loader, NULL);
+    }
+    g_object_unref(loader);
+    return pixbuf;
+}
+
+// Redraws state->original_pixbuf and every node's hit box from the cached
+// Graphviz SVG with the current overrides applied. FALSE (leaving the
+// previous picture alone) if there's no cache or the SVG can't be drawn.
+static gboolean render_from_layout_cache(SchematicState *state)
+{
+    if (state->base_svg == NULL || state->svg_nodes == NULL || state->nodes == NULL) {
+        return FALSE;
+    }
+
+    GHashTable *offsets = collect_offsets(state);
+    SchematicSvgBounds bounds;
+    GError *error = NULL;
+    gchar *svg = schematic_svg_apply_offsets(state->base_svg, state->svg_nodes, offsets,
+                                             state->graph_w_pt, state->graph_h_pt, PX_PER_PT,
+                                             &bounds, &error);
+    GdkPixbuf *pixbuf = svg != NULL ? pixbuf_from_svg(svg, &error) : NULL;
+    g_free(svg);
+
+    if (pixbuf == NULL) {
+        g_hash_table_unref(offsets);
+        g_clear_error(&error);
+        return FALSE;
+    }
+
+    for (guint i = 0; i < state->nodes->len; i++) {
+        SchematicNodeInfo *node = g_ptr_array_index(state->nodes, i);
+        const SchematicSvgNode *sn = g_hash_table_lookup(state->svg_nodes, node->id);
+        if (sn != NULL) {
+            schematic_svg_node_pixel_box(sn, g_hash_table_lookup(offsets, node->id), &bounds,
+                                         PX_PER_PT, &node->x, &node->y, &node->w, &node->h);
+        }
+    }
+    g_hash_table_unref(offsets);
+
+    if (state->original_pixbuf != NULL) {
+        g_object_unref(state->original_pixbuf);
+    }
+    state->original_pixbuf = pixbuf;
+    apply_zoom(state);
+    return TRUE;
+}
+
+// Fills state->base_svg / svg_nodes / graph size from this refresh's
+// Graphviz output. `plain_text` is `-Tplain` of the same DOT.
+static void cache_svg_layout(SchematicState *state, const gchar *svg_text, const gchar *plain_text)
+{
+    g_free(state->base_svg);
+    state->base_svg = g_strdup(svg_text);
+    if (state->svg_nodes != NULL) {
+        g_hash_table_unref(state->svg_nodes);
+    }
+    state->svg_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    state->graph_w_pt = state->graph_h_pt = 0.0;
+
+    // -Tplain is inches, y up from the bottom-left; the SVG's own inner
+    // coordinates are points, y down (centre = (cx*72, -cy*72)).
+    gchar **lines = g_strsplit(plain_text, "\n", -1);
+    for (guint i = 0; lines[i] != NULL; i++) {
+        gdouble a, b, c, d;
+        gchar name[64];
+        if (sscanf(lines[i], "graph %*f %lf %lf", &a, &b) == 2) {
+            state->graph_w_pt = a * 72.0;
+            state->graph_h_pt = b * 72.0;
+        } else if (sscanf(lines[i], "node %63s %lf %lf %lf %lf", name, &a, &b, &c, &d) == 5) {
+            SchematicSvgNode *sn = g_new0(SchematicSvgNode, 1);
+            sn->cx = a * 72.0;
+            sn->cy = -b * 72.0;
+            sn->w = c * 72.0;
+            sn->h = d * 72.0;
+            g_hash_table_insert(state->svg_nodes, g_strdup(name), sn);
+        }
+    }
+    g_strfreev(lines);
+}
+
 static void schematic_navigate_to(SchematicState *state, const gchar *new_path);
 static void schematic_expand_depth(SchematicState *state);
 static void set_max_depth(SchematicState *state, guint new_depth);
@@ -835,6 +1071,28 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
                 "limits -- no signal to query)\n");
         } else {
             status_text("GTKWAVE | (structural node -- no signal to query)\n");
+        }
+        return TRUE;
+    }
+
+    // In move mode a left press grabs the node for repositioning (any node,
+    // structural ones included -- they're exactly what's worth moving), and
+    // the click/double-click/drag-to-waveform gestures below are off. The
+    // right-click menu above still works.
+    if (state->move_mode && event->button == 1) {
+        if (event->type == GDK_BUTTON_PRESS) {
+            gdouble dx = 0.0, dy = 0.0;
+            schematic_layout_get(state->signal_path, node->key, node->label, &dx, &dy);
+            g_free(state->moving_id);
+            g_free(state->moving_key);
+            g_free(state->moving_label);
+            state->moving_id = g_strdup(node->id);
+            state->moving_key = g_strdup(node->key);
+            state->moving_label = g_strdup(node->label);
+            state->move_start_x = event->x_root;
+            state->move_start_y = event->y_root;
+            state->move_base_dx = dx;
+            state->move_base_dy = dy;
         }
         return TRUE;
     }
@@ -900,9 +1158,34 @@ on_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_da
 // drag from (treesearch.c's dnd_setup()) -- GwSignalList already accepts
 // drops of that format (signal_list.c), so no destination-side change is
 // needed.
+// Applies the pointer's travel since the press to the grabbed node's
+// override and redraws. Pointer deltas come from ROOT coordinates: the
+// event box is centred in the viewport, so its own origin (and every
+// widget-relative coordinate) shifts whenever a move grows the picture.
+// Throttled while dragging; `final` always draws.
+static void update_move(SchematicState *state, gdouble x_root, gdouble y_root, gboolean final)
+{
+    gint64 now = g_get_monotonic_time();
+    if (!final && now - state->last_preview_us < PREVIEW_INTERVAL_US) {
+        return;
+    }
+    state->last_preview_us = now;
+
+    gdouble zoom = state->zoom != 0.0 ? state->zoom : 1.0;
+    gdouble dx = state->move_base_dx + (x_root - state->move_start_x) / zoom / PX_PER_PT;
+    gdouble dy = state->move_base_dy + (y_root - state->move_start_y) / zoom / PX_PER_PT;
+    schematic_layout_set(state->signal_path, state->moving_key, state->moving_label, dx, dy);
+    render_from_layout_cache(state);
+}
+
 static gboolean on_image_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
 {
     SchematicState *state = user_data;
+
+    if (state->moving_id != NULL) {
+        update_move(state, event->x_root, event->y_root, FALSE);
+        return TRUE;
+    }
 
     if (!state->drag_pending || state->drag_full_path == NULL) {
         return FALSE;
@@ -941,9 +1224,16 @@ static gboolean
 on_image_button_release(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
     (void)widget;
-    (void)event;
     SchematicState *state = user_data;
     state->drag_pending = FALSE;
+
+    if (state->moving_id != NULL) {
+        update_move(state, event->x_root, event->y_root, TRUE);
+        g_clear_pointer(&state->moving_id, g_free);
+        g_clear_pointer(&state->moving_key, g_free);
+        g_clear_pointer(&state->moving_label, g_free);
+        return TRUE;
+    }
     return FALSE;
 }
 
@@ -1309,6 +1599,10 @@ static void refresh_schematic(SchematicState *state)
 
     GHashTable *id_to_label = extract_node_labels(dot);
 
+    // Stable node identities from the FULL cone (before depth pruning, so a
+    // key doesn't change with the depth limit) -- see schematic_node_key.h.
+    GHashTable *node_keys = schematic_node_keys(dot);
+
     // Depth-limited "Cone Window" rendering: prune the cone down to
     // state->max_depth reverse-edge hops from the root before any of the
     // (currently-unbounded) annotation/rendering work below runs. 0 means
@@ -1346,35 +1640,17 @@ static void refresh_schematic(SchematicState *state)
         recolor_dot_edges(annotated_nodes, leaf_to_path, cursor_time, signal_value_at_time_g);
     g_free(annotated_nodes);
 
-    gchar *png_path = NULL;
-    gboolean ok = run_dot_to_png(annotated, &png_path, &error);
-
-    if (!ok) {
-        g_free(annotated);
-        g_hash_table_unref(id_to_label);
-        g_hash_table_unref(leaf_to_path);
-        if (boundary_ids != NULL) {
-            g_hash_table_unref(boundary_ids);
-        }
-        gchar *msg = g_strdup_printf("GTKWAVE | Rendering schematic failed: %s\n",
-                                     error != NULL ? error->message : "unknown error");
-        status_text(msg);
-        g_free(msg);
-        g_clear_error(&error);
-        return;
-    }
-
     gchar *plain_extra_args[] = {(gchar *)"-Gpad=0", (gchar *)"-Gmargin=0", (gchar *)"-Tplain",
                                 NULL};
     gchar *plain_text = NULL;
     gboolean plain_ok = run_dot_capture(annotated, plain_extra_args, &plain_text, NULL);
-    g_free(annotated);
 
     GPtrArray *nodes = NULL;
     if (plain_ok) {
-        nodes = parse_plain_nodes(plain_text, id_to_label, leaf_to_path, boundary_ids);
-        g_free(plain_text);
+        nodes = parse_plain_nodes(plain_text, id_to_label, leaf_to_path, boundary_ids, node_keys);
+        make_keys_unique(nodes);
     }
+    g_hash_table_unref(node_keys);
     // If -Tplain failed, click handling just silently finds no nodes
     // (find_node_at() on a NULL list returns NULL) -- the schematic still
     // displays, it just isn't clickable this refresh.
@@ -1383,6 +1659,57 @@ static void refresh_schematic(SchematicState *state)
     g_hash_table_unref(leaf_to_path);
     if (boundary_ids != NULL) {
         g_hash_table_unref(boundary_ids);
+    }
+
+    // Hand-made layout: draw from Graphviz's SVG with the node overrides
+    // applied instead of its PNG. Needs node geometry (-Tplain) and the
+    // SVG pixbuf loader; if either is missing, fall through to the plain
+    // PNG below, so a machine that can't do this shows the normal diagram.
+    if (plain_ok && schematic_wants_svg(state)) {
+        gchar *svg_args[] = {(gchar *)"-Gpad=0", (gchar *)"-Gmargin=0", (gchar *)"-Tsvg", NULL};
+        gchar *svg_text = NULL;
+        if (run_dot_capture(annotated, svg_args, &svg_text, NULL)) {
+            cache_svg_layout(state, svg_text, plain_text);
+
+            // render_from_layout_cache() places hit boxes on state->nodes,
+            // so the new list has to be installed first.
+            if (state->nodes != NULL) {
+                g_ptr_array_unref(state->nodes);
+            }
+            state->nodes = nodes;
+            nodes = NULL;
+
+            gboolean drawn = render_from_layout_cache(state);
+            g_free(svg_text);
+            if (drawn) {
+                g_free(plain_text);
+                g_free(annotated);
+                return;
+            }
+
+            // Take the list back for the PNG path's own install below.
+            nodes = state->nodes;
+            state->nodes = NULL;
+            status_text("GTKWAVE | Couldn't draw the edited layout (no SVG support in "
+                       "gdk-pixbuf?) -- showing Graphviz's own layout instead.\n");
+        }
+    }
+    g_free(plain_text);
+
+    gchar *png_path = NULL;
+    gboolean ok = run_dot_to_png(annotated, &png_path, &error);
+    g_free(annotated);
+
+    if (!ok) {
+        if (nodes != NULL) {
+            g_ptr_array_unref(nodes);
+        }
+        gchar *msg = g_strdup_printf("GTKWAVE | Rendering schematic failed: %s\n",
+                                     error != NULL ? error->message : "unknown error");
+        status_text(msg);
+        g_free(msg);
+        g_clear_error(&error);
+        return;
     }
 
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(png_path, &error);
@@ -1643,6 +1970,36 @@ static gchar *sanitize_filename_component(const gchar *s)
 // independent of whatever zoom level is currently on screen -- a Print/
 // Capture action should capture the full-detail render, not whatever a
 // user happened to have zoomed/panned to.
+static void on_move_toggled(GtkToggleButton *button, gpointer user_data)
+{
+    SchematicState *state = user_data;
+    state->move_mode = gtk_toggle_button_get_active(button);
+
+    // Re-render so the diagram is on the SVG path (and its hit boxes are
+    // the SVG's) for as long as move mode is on, and back on Graphviz's PNG
+    // when it's turned off with nothing moved.
+    refresh_schematic(state);
+
+    status_text(state->move_mode
+                    ? "GTKWAVE | Move Nodes on: drag any box to reposition it. Double-click, "
+                      "click-to-inspect and drag-to-waveform are off until it's turned off.\n"
+                    : "GTKWAVE | Move Nodes off.\n");
+}
+
+static void on_reset_layout_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    SchematicState *state = user_data;
+
+    if (schematic_layout_count(state->signal_path) == 0) {
+        status_text("GTKWAVE | Nothing to reset -- no node has been moved in this schematic.\n");
+        return;
+    }
+    schematic_layout_clear(state->signal_path);
+    refresh_schematic(state);
+    status_text("GTKWAVE | Layout reset to Graphviz's automatic placement.\n");
+}
+
 static void on_export_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
@@ -1795,6 +2152,22 @@ void netlist_query_show_schematic(const char *signal_path)
     GtkWidget *zoom_100_button = gtk_button_new_with_label("1:1");
     gtk_box_pack_start(GTK_BOX(toolbar), zoom_100_button, FALSE, FALSE, 0);
 
+    GtkWidget *layout_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(toolbar), layout_sep, FALSE, FALSE, 4);
+
+    GtkWidget *move_toggle = gtk_toggle_button_new_with_label("Move Nodes");
+    gtk_widget_set_tooltip_text(
+        move_toggle,
+        "Drag any box to reposition it by hand. Layered on top of Graphviz's layout (only the "
+        "boxes you move change), remembered per signal, saved in save files, and included in "
+        "Export Image.");
+    gtk_box_pack_start(GTK_BOX(toolbar), move_toggle, FALSE, FALSE, 0);
+
+    GtkWidget *reset_layout_button = gtk_button_new_with_label("Reset Layout");
+    gtk_widget_set_tooltip_text(reset_layout_button,
+                                "Put every moved box back where Graphviz placed it");
+    gtk_box_pack_start(GTK_BOX(toolbar), reset_layout_button, FALSE, FALSE, 0);
+
     GtkWidget *export_sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
     gtk_box_pack_start(GTK_BOX(toolbar), export_sep, FALSE, FALSE, 4);
 
@@ -1828,6 +2201,7 @@ void netlist_query_show_schematic(const char *signal_path)
     state->scrolled = scrolled;
     state->back_button = back_button;
     state->depth_spin = depth_spin;
+    state->move_toggle = move_toggle;
     state->zoom = 1.0;
     state->max_depth = SCHEMATIC_DEFAULT_MAX_DEPTH;
     state->signal_path = g_strdup(signal_path);
@@ -1844,6 +2218,8 @@ void netlist_query_show_schematic(const char *signal_path)
     g_signal_connect(zoom_fit_button, "clicked", G_CALLBACK(on_zoom_fit_clicked), state);
     g_signal_connect(zoom_100_button, "clicked", G_CALLBACK(on_zoom_100_clicked), state);
     g_signal_connect(export_button, "clicked", G_CALLBACK(on_export_clicked), state);
+    g_signal_connect(move_toggle, "toggled", G_CALLBACK(on_move_toggled), state);
+    g_signal_connect(reset_layout_button, "clicked", G_CALLBACK(on_reset_layout_clicked), state);
 
     g_object_set_data_full(G_OBJECT(window), "schematic-state", state, schematic_state_free);
 
