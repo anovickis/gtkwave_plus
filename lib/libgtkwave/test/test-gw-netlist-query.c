@@ -292,6 +292,66 @@ static void test_spawn_failure_reports_error(void)
     g_object_unref(query);
 }
 
+static void test_get_sensitivity(void)
+{
+    if (skip_if_no_binary()) {
+        return;
+    }
+
+    GwNetlistQuery *query = new_query_for_test_design();
+
+    GError *error = NULL;
+    GPtrArray *edges = gw_netlist_query_get_sensitivity(query, "top.u_counter.count_q", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(edges);
+    g_assert_cmpuint(edges->len, ==, 2);
+
+    gboolean saw_clk = FALSE;
+    gboolean saw_rst_n = FALSE;
+    for (guint i = 0; i < edges->len; i++) {
+        GwNetlistEdge *edge = g_ptr_array_index(edges, i);
+        if (g_str_equal(edge->path, "top.u_counter.clk")) {
+            g_assert_cmpstr(edge->description, ==, "PosEdge");
+            saw_clk = TRUE;
+        } else if (g_str_equal(edge->path, "top.u_counter.rst_n")) {
+            g_assert_cmpstr(edge->description, ==, "NegEdge");
+            saw_rst_n = TRUE;
+        }
+    }
+    g_assert_true(saw_clk);
+    g_assert_true(saw_rst_n);
+
+    g_ptr_array_unref(edges);
+    g_object_unref(query);
+}
+
+static void test_get_registers(void)
+{
+    if (skip_if_no_binary()) {
+        return;
+    }
+
+    GwNetlistQuery *query = new_query_for_test_design();
+
+    GError *error = NULL;
+    GPtrArray *edges = gw_netlist_query_get_registers(query, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(edges);
+
+    gboolean saw_count_q = FALSE;
+    for (guint i = 0; i < edges->len; i++) {
+        GwNetlistEdge *edge = g_ptr_array_index(edges, i);
+        g_assert_nonnull(edge->path);
+        if (g_str_equal(edge->path, "top.u_counter.count_q")) {
+            saw_count_q = TRUE;
+        }
+    }
+    g_assert_true(saw_count_q);
+
+    g_ptr_array_unref(edges);
+    g_object_unref(query);
+}
+
 int main(int argc, char *argv[])
 {
     g_test_init(&argc, &argv, NULL);
@@ -304,6 +364,8 @@ int main(int argc, char *argv[])
                     test_get_fanin_limited_max_depth);
     g_test_add_func("/netlist_query/get_fanin_limited_module_boundary",
                     test_get_fanin_limited_module_boundary);
+    g_test_add_func("/netlist_query/get_sensitivity", test_get_sensitivity);
+    g_test_add_func("/netlist_query/get_registers", test_get_registers);
     g_test_add_func("/netlist_query/get_cone_dot", test_get_cone_dot);
     g_test_add_func("/netlist_query/spawn_failure_reports_error",
                     test_spawn_failure_reports_error);

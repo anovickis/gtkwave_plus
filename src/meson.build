@@ -21,6 +21,8 @@ gtkwave_sources = [
     'debug.c',
     'edgebuttons.c',
     'entry.c',
+    'event_sequence.c',
+    'event_sequence_view.c',
     'dump_file_main.c',
     'fetchbuttons.c',
     'fgetdynamic.c',
@@ -118,6 +120,16 @@ executable(
     install: true,
     install_rpath: install_rpath,
 )
+
+# event_sequence backend unit test (GTK-free: glib + libfst only)
+
+event_sequence_test = executable(
+    'event_sequence_test',
+    ['event_sequence.c', 'event_sequence_test.c'],
+    dependencies: [glib_dep, libfst_dep],
+    c_args: warning_args,
+)
+test('event_sequence', event_sequence_test)
 
 # twinwave
 

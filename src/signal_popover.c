@@ -13,6 +13,7 @@
 #include "gate_schematic_view.h"
 #include "netlist_query_ui.h"
 #include "signal_event_report.h"
+#include "event_sequence_view.h"
 #include "status.h"
 
 typedef void (*MenuAction)(gpointer, guint, GtkWidget *);
@@ -263,6 +264,14 @@ static void on_show_event_report_clicked(GtkButton *button, gpointer user_data)
     signal_event_report_show();
 }
 
+static void on_show_event_sequence_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    close_ancestor_popover(GTK_WIDGET(button));
+    event_sequence_view_show();
+}
+
 static void on_expand_subbus_clicked(GtkButton *button, gpointer user_data)
 {
     (void)user_data;
@@ -401,6 +410,11 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     g_signal_connect(
         event_report_button, "clicked", G_CALLBACK(on_show_event_report_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(box), event_report_button, FALSE, FALSE, 0);
+
+    GtkWidget *event_sequence_button = gtk_button_new_with_label("Event Sequence");
+    g_signal_connect(
+        event_sequence_button, "clicked", G_CALLBACK(on_show_event_sequence_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(box), event_sequence_button, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
 

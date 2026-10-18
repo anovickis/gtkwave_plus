@@ -144,4 +144,21 @@ gchar *gw_netlist_query_get_cone_dot(GwNetlistQuery *self,
                                     const gchar *signal_path,
                                     GError **error);
 
+/*
+ * The clocks/resets that gate signal_path (`--sensitivity`). For a
+ * register, its own clocking signals; for anything else slang-netlist
+ * reports the union over every register in its combinational fan-out,
+ * which isn't a cause of signal_path -- callers wanting "what triggers
+ * this signal" should only ask about registers (see get_registers()).
+ * `path` is the clock/reset signal and `description` is the edge
+ * ("PosEdge"/"NegEdge"). Same ownership contract as get_drivers().
+ */
+GPtrArray *gw_netlist_query_get_sensitivity(GwNetlistQuery *self,
+                                            const gchar *signal_path,
+                                            GError **error);
+
+/* Every register in the design (`--report-registers`), `path` populated.
+ * Same ownership contract as get_drivers(). */
+GPtrArray *gw_netlist_query_get_registers(GwNetlistQuery *self, GError **error);
+
 G_END_DECLS

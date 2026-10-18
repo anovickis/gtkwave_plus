@@ -446,3 +446,51 @@ GPtrArray *gw_netlist_query_get_fanin_limited(GwNetlistQuery *self,
     }
     return edges;
 }
+
+GPtrArray *gw_netlist_query_get_sensitivity(GwNetlistQuery *self,
+                                            const gchar *signal_path,
+                                            GError **error)
+{
+    g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
+    g_return_val_if_fail(signal_path != NULL, NULL);
+
+    gchar *extra_args[] = {(gchar *)"--sensitivity", (gchar *)signal_path, (gchar *)"--format",
+                          (gchar *)"json", NULL};
+    gchar *json_text = run_argv(self, extra_args, error);
+    if (json_text == NULL) {
+        return NULL;
+    }
+
+    static const FieldMapping mapping[] = {
+        {"name", "path"},
+        {"edge", "description"},
+        {"location", "location"},
+        {NULL, NULL},
+    };
+
+    GPtrArray *edges = parse_edges(json_text, mapping, error);
+    g_free(json_text);
+    return edges;
+}
+
+GPtrArray *gw_netlist_query_get_registers(GwNetlistQuery *self, GError **error)
+{
+    g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
+
+    gchar *extra_args[] = {(gchar *)"--report-registers", (gchar *)"--format", (gchar *)"json",
+                          NULL};
+    gchar *json_text = run_argv(self, extra_args, error);
+    if (json_text == NULL) {
+        return NULL;
+    }
+
+    static const FieldMapping mapping[] = {
+        {"name", "path"},
+        {"location", "location"},
+        {NULL, NULL},
+    };
+
+    GPtrArray *edges = parse_edges(json_text, mapping, error);
+    g_free(json_text);
+    return edges;
+}

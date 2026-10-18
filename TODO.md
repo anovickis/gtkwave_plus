@@ -1023,6 +1023,40 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   but confirmed that doesn't help either, since the renaming/elimination
   happens *during* `submod` itself, not before it.
 
+- **Event Sequence pane** (signal popover -> "Event Sequence"). For one
+  timestamp (defaults to the primary marker; Go / At Marker / Prev / Next,
+  where Prev/Next step between times any displayed signal changes), lists
+  every value change with two independent orderings, rather than adding a
+  sequence field to every `GwHistEnt`:
+  1. **Dump order (VCD, incl. .gz):** the dump file is re-scanned on demand
+     for just that timestamp (`src/event_sequence.c`, GTK-free, unit-tested
+     in `src/event_sequence_test.c`). FST can't give this -- its reader
+     walks a time step's changes by signal handle, not write order -- so
+     Seq is blank there. GHW, bzip2 and stdin dumps are reported as
+     unsupported.
+  2. **Causality (any format, needs the netlist; "Rank by causality"):**
+     each changed signal's fan-in cone, plus a register's clock/reset
+     (new `gw_netlist_query_get_sensitivity()`/`get_registers()`), is
+     intersected with the set that changed at that timestamp, giving
+     "caused by" and a level (0 = nothing changed feeds it). Flags changes
+     the simulator dumped *before* their cause. Capped at 64 netlist
+     queries (one process spawn each); the rest show as "?".
+  Nets with several names (VCD id-code / FST handle aliases) collapse into
+  one row, deepest-scoped name primary. "Only displayed signals" filters
+  before ranking so the cap is spent on what you care about.
+  **Known gaps:** slang-netlist treats a register as a hard cut in both
+  directions (`fan-in(y)` for `y = ~q` doesn't list `q`; `fan-out(q)`
+  doesn't list `y`), so `clk -> q` is ranked but `q -> logic fed by q`
+  is not -- that logic shows at level 0 next to its stimulus. Wires
+  slang-netlist can't resolve (plain testbench-internal wires) are
+  unranked ("?"). Causality is inferred structure, not simulator delta
+  numbers: it can say what *could* have caused a change, not the
+  simulator's actual evaluation order. Values are shown as dumped (no
+  radix/translate-filter formatting). Verified end to end in the real app
+  (gdb-driven, headless) plus 7 backend and 2 netlist-wrapper tests; an
+  end-to-end pass caught a double-free in the view's row rendering that
+  the unit tests couldn't reach.
+
 ## Up next, in order
 
 Re-ranked by value (not just effort) after a deliberate stock-take of
@@ -1119,9 +1153,7 @@ the conversation history for the full reasoning behind this ordering.
     Medium-to-large, not a bounded single-session task; deferred rather
     than rushed, same reasoning as Waveform Compare.
 
-6. **Event Sequence pane** (sub-timestamp/delta-cycle detail). Valuable
-    but needs a real new sub-timestamp data model; highest effort on
-    this list.
+6. ~~**Event Sequence pane**~~ -- done, see the Done section above.
 
 7. **Dense Block Drawing** (fast struct/MDA rendering) -- largely
     already covered; deprioritized. Struct/union signals aren't a
