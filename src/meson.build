@@ -57,6 +57,7 @@ gtkwave_sources = [
     'regex.c',
     'renderopt.c',
     'savefile.c',
+    'gate_cone_select.c',
     'gate_schematic_view.c',
     'schematic_layout.c',
     'schematic_node_key.c',
@@ -163,6 +164,15 @@ schematic_node_key_test = executable(
     c_args: warning_args,
 )
 test('schematic_node_key', schematic_node_key_test)
+
+gate_cone_select_test = executable(
+    'gate_cone_select_test',
+    ['gate_cone_select.c', 'gate_cone_select_test.c'],
+    dependencies: [glib_dep],
+    c_args: warning_args,
+)
+test('gate_cone_select', gate_cone_select_test,
+     args: [meson.project_source_root() / 'lib/libgtkwave/test/files/gate_cone_design.sv'])
 
 # twinwave
 

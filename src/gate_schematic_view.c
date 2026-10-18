@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "gate_schematic_view.h"
+#include "gate_cone_select.h"
 #include "globals.h"
 #include "netlist_query_ui.h"
 #include "source_panel.h"
@@ -28,8 +29,6 @@
 // handler, which is defined before all of that.
 typedef struct GateSchematicState GateSchematicState;
 static void gate_refresh_schematic(GateSchematicState *state);
-static void gate_set_max_depth(GateSchematicState *state, guint new_depth);
-static void gate_expand_depth(GateSchematicState *state);
 static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data);
 static void gate_dissolve_instances(GateSchematicState *state, const gchar *const *instance_ids,
                                     guint n);
@@ -154,6 +153,11 @@ typedef struct
                                 further to expand). Double-clicking one grows
                                 the depth limit instead of the click-to-source
                                 behavior an internal gate gets. */
+    gboolean is_output_port; /* TRUE for the outputExt kind of boundary port --
+                              the queried signal itself, which has nothing
+                              upstream of it left to expand. Only an
+                              inputExt boundary port is a net worth growing
+                              the cone from. */
     gboolean is_module_instance; /* TRUE for a cell whose Yosys type is a
                                  user module name rather than a `$`-prefixed
                                  primitive -- an un-dissolved sub-module
@@ -305,12 +309,13 @@ static gchar *build_ancestor_flatten_clause(const gchar *select_expr);
 // `"flatten <obj> <obj> ...; "` fragment (see gate_refresh_schematic())
 // naming exactly the dissolved instances to inline. `filter_suffix` is
 // either "" (nothing filtered out) or a caller-built
-// `" <obj> ... %u ... %d"` fragment (see build_filter_suffix()) to
+// `" <obj> ... %u ... %d"` fragment (see gate_cone_select_expression()) to
 // subtract specific objects back out of the selected cone. Caller owns
 // *out_dot_text (g_free).
-static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, guint max_depth,
-                          const gchar *flatten_clause, const gchar *filter_suffix,
-                          gchar **out_dot_text, GError **error)
+static gboolean run_yosys(const gchar *top_module, const gchar *select_expr,
+                          const gchar *select_tail, const gchar *flatten_clause,
+                          const gchar *probe_script, gchar **out_dot_text, gchar **out_log,
+                          GError **error)
 {
     gchar *dot_path = NULL;
     gint dot_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.dot", &dot_path, error);
@@ -335,13 +340,6 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
     // modules actually reachable from the configured top, so a sibling
     // testbench module that merely happens to sit in the same source
     // file list never gets compiled (and never hit) at all.
-    gchar hop_arg[16];
-    if (max_depth > 0) {
-        g_snprintf(hop_arg, sizeof(hop_arg), "%%ci%u", max_depth);
-    } else {
-        g_strlcpy(hop_arg, "%ci*", sizeof(hop_arg));
-    }
-
     gchar *ancestor_flatten = build_ancestor_flatten_clause(select_expr);
 
     GString *script = g_string_new("read_verilog -sv -defer");
@@ -351,13 +349,12 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
     }
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; %s%smemory_collect; opt; techmap; "
-                          "opt; select %s %s%s; show -format dot -prefix %s -notitle -href",
+                          "opt; %sselect %s; show -format dot -prefix %s -notitle -href",
                           top_module,
                           ancestor_flatten,
                           flatten_clause,
-                          select_expr,
-                          hop_arg,
-                          filter_suffix,
+                          probe_script,
+                          select_tail,
                           prefix);
     g_free(ancestor_flatten);
 
@@ -385,7 +382,14 @@ static gboolean run_yosys(const gchar *top_module, const gchar *select_expr, gui
 
     g_free(yosys_bin);
     g_string_free(script, TRUE);
-    g_free(out);
+    // Yosys's own log carries the expansion probes' results (see
+    // gate_cone_probe_script()); the caller reads it whether or not this
+    // run succeeded, and always owns what's handed back.
+    if (out_log != NULL) {
+        *out_log = out;
+    } else {
+        g_free(out);
+    }
 
     if (!spawned) {
         g_set_error(error,
@@ -589,10 +593,14 @@ static gchar *build_ancestor_flatten_clause(const gchar *select_expr)
 // asserting first makes that abort the whole Yosys run (a normal,
 // already-handled failure, see extract_select_relative_path()) instead
 // of silently corrupting the result.
-static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr, guint max_depth,
-                               const gchar *flatten_clause, const gchar *filter_suffix,
-                               gchar **out_json_text, GError **error)
+static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr,
+                               const gchar *select_tail, const gchar *flatten_clause,
+                               const gchar *probe_script, gchar **out_json_text,
+                               gchar **out_log, GError **error)
 {
+    if (out_log != NULL) {
+        *out_log = NULL;
+    }
     gchar *json_path = NULL;
     gint json_fd = g_file_open_tmp("gtkwave-gate-schem-XXXXXX.json", &json_path, error);
     if (json_fd < 0) {
@@ -601,13 +609,6 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
     g_close(json_fd, NULL);
     g_unlink(json_path);
     gchar *prefix = g_strdup(json_path);
-
-    gchar hop_arg[16];
-    if (max_depth > 0) {
-        g_snprintf(hop_arg, sizeof(hop_arg), "%%ci%u", max_depth);
-    } else {
-        g_strlcpy(hop_arg, "%ci*", sizeof(hop_arg));
-    }
 
     gchar *ancestor_flatten = build_ancestor_flatten_clause(select_expr);
 
@@ -627,14 +628,13 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
     }
     g_string_append_printf(script,
                           "; hierarchy -check -top %s; proc; %s%smemory_collect; opt; techmap; "
-                          "opt; select %s %s%s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
+                          "opt; %sselect %s; submod -name " GATE_CONE_SUBMODULE_NAME "; "
                           "%s; select " GATE_CONE_SUBMODULE_NAME "; write_json -selected %s.json",
                           top_module,
                           ancestor_flatten,
                           flatten_clause,
-                          select_expr,
-                          hop_arg,
-                          filter_suffix,
+                          probe_script,
+                          select_tail,
                           prune_suffix,
                           prefix);
     g_free(prune_suffix);
@@ -664,7 +664,11 @@ static gboolean run_yosys_json(const gchar *top_module, const gchar *select_expr
 
     g_free(yosys_bin);
     g_string_free(script, TRUE);
-    g_free(out);
+    if (out_log != NULL) {
+        *out_log = out;
+    } else {
+        g_free(out);
+    }
 
     if (!spawned) {
         g_set_error(error,
@@ -1013,6 +1017,7 @@ static GPtrArray *parse_netlistsvg_cell_nodes(const gchar *svg_text, GHashTable 
         info->id = cell_id; /* adopts the g_match_info_fetch() allocation */
         info->is_boundary_port =
             g_str_equal(type_str, "inputExt") || g_str_equal(type_str, "outputExt");
+        info->is_output_port = g_str_equal(type_str, "outputExt");
         g_free(type_str);
         info->x = g_ascii_strtod(x_str, NULL);
         info->y = g_ascii_strtod(y_str, NULL);
@@ -1215,10 +1220,17 @@ struct GateSchematicState
                                      of the window; a right-click menu's
                                      "Collapse" entry can remove an entry
                                      again (gate_collapse_instance()). */
+    GPtrArray *expansions; /* owned GateExpansion*: nets the user has grown the cone
+                            from by double-clicking a boundary port, each a
+                            (net, hops) pair unioned into the Yosys selection
+                            alongside the root's own `max_depth` hops (see
+                            gate_cone_select.h). Keyed by NET name -- never a
+                            cell name, which renumbers when an instance is
+                            dissolved. NULL until the first expansion. */
     GPtrArray *filtered_out; /* owned gchar*, each a Yosys object name the
                               right-click menu's "Filter Out" action has
                               subtracted from the shown cone (see
-                              build_filter_suffix()) -- NULL until the
+                              gate_cone_select_expression()) -- NULL until the
                               first filter. Persists for the life of the
                               window; grows only (no un-filter gesture
                               yet, unlike dissolve's collapse). */
@@ -1249,6 +1261,9 @@ static void gate_schematic_state_free(gpointer data)
     }
     if (state->filtered_out != NULL) {
         g_ptr_array_unref(state->filtered_out);
+    }
+    if (state->expansions != NULL) {
+        g_ptr_array_unref(state->expansions);
     }
     if (state->selected_ids != NULL) {
         g_hash_table_unref(state->selected_ids);
@@ -1341,37 +1356,120 @@ static void on_gate_zoom_100_clicked(GtkButton *button, gpointer user_data)
     gate_set_zoom((GateSchematicState *)user_data, 1.0);
 }
 
-// Sets state->max_depth and keeps the toolbar spinner in sync (blocking
-// its own "value-changed" handler so this doesn't recurse/double-
-// refresh) -- see set_max_depth() in schematic_view.c for the identical
-// pattern/reasoning.
-static void gate_set_max_depth(GateSchematicState *state, guint new_depth)
-{
-    state->max_depth = new_depth;
-    if (state->depth_spin != NULL) {
-        g_signal_handlers_block_by_func(state->depth_spin, G_CALLBACK(on_gate_depth_spin_changed),
-                                        state);
-        gtk_spin_button_set_value(GTK_SPIN_BUTTON(state->depth_spin), new_depth);
-        g_signal_handlers_unblock_by_func(
-            state->depth_spin, G_CALLBACK(on_gate_depth_spin_changed), state);
-    }
-}
-
-// Double-clicking a boundary port connector (see GateNodeInfo's own
-// comment) grows the depth limit by 2 hops and re-renders the same root
-// signal's cone -- see schematic_expand_depth() in schematic_view.c for
-// the identical pattern.
-static void gate_expand_depth(GateSchematicState *state)
-{
-    gate_set_max_depth(state, state->max_depth + 2);
-    gate_refresh_schematic(state);
-}
-
 static void on_gate_depth_spin_changed(GtkSpinButton *widget, gpointer user_data)
 {
     GateSchematicState *state = user_data;
     state->max_depth = (guint)gtk_spin_button_get_value_as_int(widget);
     gate_refresh_schematic(state);
+}
+
+// Flattening an instance (Dissolve or Collapse) renumbers every gate that
+// opt/techmap create afterwards -- their names come from a global counter
+// (`$auto$ff.cc:337:slice$227` became `...$228` once u_alu was flattened,
+// checked against a real Yosys). A saved filter or expansion that names one
+// would then silently point at a DIFFERENT cell, so drop those (user-declared
+// names survive and are kept) and say so, rather than act on the wrong object.
+static void gate_drop_unstable_names(GateSchematicState *state)
+{
+    guint dropped = 0;
+
+    if (state->filtered_out != NULL) {
+        for (guint i = state->filtered_out->len; i > 0; i--) {
+            if (gate_cone_name_is_unstable(g_ptr_array_index(state->filtered_out, i - 1))) {
+                g_ptr_array_remove_index(state->filtered_out, i - 1);
+                dropped++;
+            }
+        }
+    }
+    if (state->expansions != NULL) {
+        for (guint i = state->expansions->len; i > 0; i--) {
+            const GateExpansion *e = g_ptr_array_index(state->expansions, i - 1);
+            if (gate_cone_name_is_unstable(e->seed)) {
+                g_ptr_array_remove_index(state->expansions, i - 1);
+                dropped++;
+            }
+        }
+    }
+
+    if (dropped > 0) {
+        gchar *msg = g_strdup_printf(
+            "GTKWAVE | Dropped %u filter/expansion%s on auto-generated gate names: changing which "
+            "instances are dissolved renumbers them, so they could now mean a different gate.\n",
+            dropped,
+            dropped == 1 ? "" : "s");
+        status_text(msg);
+        g_free(msg);
+    }
+}
+
+// Grows the cone from ONE net: a double-clicked boundary port pulls in just
+// that net's driver (one more hop upstream of it), leaving the rest of the
+// diagram exactly as it was -- unlike the depth spinner, which deepens every
+// branch at once. Expanding the same net again goes another hop further.
+#define GATE_EXPAND_HOPS_PER_CLICK 1
+
+static void gate_expand_net(GateSchematicState *state, const gchar *net)
+{
+    if (state->top_module == NULL) {
+        return;
+    }
+    if (state->expansions == NULL) {
+        state->expansions = g_ptr_array_new_with_free_func((GDestroyNotify)gate_expansion_free);
+    }
+
+    gchar *seed = g_strconcat(state->top_module, "/", net, NULL);
+    GateExpansion *existing = NULL;
+    for (guint i = 0; i < state->expansions->len; i++) {
+        GateExpansion *e = g_ptr_array_index(state->expansions, i);
+        if (g_str_equal(e->seed, seed)) {
+            existing = e;
+            break;
+        }
+    }
+
+    if (existing != NULL) {
+        existing->hops += GATE_EXPAND_HOPS_PER_CLICK;
+        g_free(seed);
+    } else {
+        g_ptr_array_add(state->expansions, gate_expansion_new(seed, GATE_EXPAND_HOPS_PER_CLICK));
+        g_free(seed);
+    }
+    gate_refresh_schematic(state);
+}
+
+// Undo of gate_expand_net(): drops the whole expansion at `seed` (exactly as
+// stored in state->expansions). There's no click target left for it once
+// shrunk, so like Collapse this is a right-click menu action.
+static void gate_shrink_expansion(GateSchematicState *state, const gchar *seed)
+{
+    if (state->expansions == NULL) {
+        return;
+    }
+    for (guint i = 0; i < state->expansions->len; i++) {
+        const GateExpansion *e = g_ptr_array_index(state->expansions, i);
+        if (g_str_equal(e->seed, seed)) {
+            g_ptr_array_remove_index(state->expansions, i);
+            gate_refresh_schematic(state);
+            return;
+        }
+    }
+}
+
+// Undo of gate_filter_objects(): the object is back in the cone (as far as
+// the current depth and expansions reach). A filtered-out object is no
+// longer drawn, so this too is a menu action rather than a click on it.
+static void gate_unfilter_object(GateSchematicState *state, const gchar *selector)
+{
+    if (state->filtered_out == NULL) {
+        return;
+    }
+    for (guint i = 0; i < state->filtered_out->len; i++) {
+        if (g_str_equal(g_ptr_array_index(state->filtered_out, i), selector)) {
+            g_ptr_array_remove_index(state->filtered_out, i);
+            gate_refresh_schematic(state);
+            return;
+        }
+    }
 }
 
 // Dissolving (double-click, or the right-click menu's "Dissolve") adds
@@ -1410,6 +1508,7 @@ static void gate_dissolve_instances(GateSchematicState *state, const gchar *cons
     }
 
     if (added_any) {
+        gate_drop_unstable_names(state);
         gate_refresh_schematic(state);
     }
 }
@@ -1430,6 +1529,7 @@ static void gate_collapse_instance(GateSchematicState *state, const gchar *selec
     for (guint i = 0; i < state->dissolved_instances->len; i++) {
         if (g_str_equal(g_ptr_array_index(state->dissolved_instances, i), selector)) {
             g_ptr_array_remove_index(state->dissolved_instances, i);
+            gate_drop_unstable_names(state);
             gate_refresh_schematic(state);
             return;
         }
@@ -1438,7 +1538,7 @@ static void gate_collapse_instance(GateSchematicState *state, const gchar *selec
 
 // The right-click menu's "Filter Out" action: removes each of `ids` (n
 // entries, each a selected node's own GateNodeInfo::id) from the shown
-// cone, via build_filter_suffix() subtracting them from the fan-in
+// cone, via gate_cone_select_expression() subtracting them from the fan-in
 // selection before submod/show runs. Boundary port connectors are never
 // passed in here (see gate_show_context_menu()): cutting one doesn't
 // shrink anything -- it's already the cone's edge at the current depth
@@ -1566,6 +1666,45 @@ static void on_gate_menu_collapse_activate(GtkMenuItem *item, gpointer user_data
     gate_collapse_instance(state, selector);
 }
 
+static void on_gate_menu_shrink_activate(GtkMenuItem *item, gpointer user_data)
+{
+    GateSchematicState *state = g_object_get_data(G_OBJECT(item), "gate-schematic-state");
+    gate_shrink_expansion(state, user_data);
+}
+
+static void on_gate_menu_unfilter_activate(GtkMenuItem *item, gpointer user_data)
+{
+    GateSchematicState *state = g_object_get_data(G_OBJECT(item), "gate-schematic-state");
+    gate_unfilter_object(state, user_data);
+}
+
+// Appends one menu item per string in `entries` (after a separator if the
+// menu already has items), each running `callback` with a private copy of
+// that string. `format` takes the string as its one %s.
+static gboolean append_string_entries(GtkWidget *menu, GateSchematicState *state,
+                                      gboolean separator_first, const gchar *format,
+                                      GCallback callback, GPtrArray *entries)
+{
+    if (entries->len == 0) {
+        return FALSE;
+    }
+    if (separator_first) {
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+    }
+    for (guint i = 0; i < entries->len; i++) {
+        const gchar *entry = g_ptr_array_index(entries, i);
+        gchar *label = g_strdup_printf(format, entry);
+        GtkWidget *item = gtk_menu_item_new_with_label(label);
+        g_free(label);
+
+        g_object_set_data(G_OBJECT(item), "gate-schematic-state", state);
+        g_signal_connect_data(item, "activate", callback, g_strdup(entry),
+                              (GClosureNotify)(GDestroyNotify)g_free, (GConnectFlags)0);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+    return TRUE;
+}
+
 // Builds and pops up the right-click context menu: "Dissolve" for any
 // selected un-dissolved module instances (batched, see gate_dissolve_
 // instances()), "Filter Out" for any selected non-boundary-port objects
@@ -1674,6 +1813,28 @@ static void gate_show_context_menu(GateSchematicState *state, GdkEventButton *ev
             gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
         }
         any_items = TRUE;
+    }
+
+    // Undo entries for the things that leave nothing on the diagram to
+    // click: a net expanded from a boundary port, and a filtered-out object.
+    if (state->expansions != NULL && state->expansions->len > 0) {
+        GPtrArray *seeds = g_ptr_array_new_with_free_func(g_free);
+        for (guint i = 0; i < state->expansions->len; i++) {
+            const GateExpansion *e = g_ptr_array_index(state->expansions, i);
+            g_ptr_array_add(seeds, g_strdup(e->seed));
+        }
+        if (append_string_entries(menu, state, any_items, "Shrink expansion at \"%s\"",
+                                  G_CALLBACK(on_gate_menu_shrink_activate), seeds)) {
+            any_items = TRUE;
+        }
+        g_ptr_array_unref(seeds);
+    }
+    if (state->filtered_out != NULL && state->filtered_out->len > 0) {
+        if (append_string_entries(menu, state, any_items, "Restore \"%s\"",
+                                  G_CALLBACK(on_gate_menu_unfilter_activate),
+                                  state->filtered_out)) {
+            any_items = TRUE;
+        }
     }
 
     if (!any_items) {
@@ -1878,7 +2039,12 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
 
     if (event->type == GDK_2BUTTON_PRESS) {
         if (node->is_boundary_port) {
-            gate_expand_depth(state);
+            if (node->is_output_port) {
+                status_text("GTKWAVE | This is the queried signal itself -- double-click an input "
+                           "boundary port to grow the cone from that net.\n");
+            } else {
+                gate_expand_net(state, node->id);
+            }
         } else if (node->is_module_instance) {
             const gchar *id = node->id;
             gate_dissolve_instances(state, &id, 1);
@@ -1897,7 +2063,10 @@ on_gate_image_button_press(GtkWidget *widget, GdkEventButton *event, gpointer us
     gate_select_only(state, node->id);
 
     if (node->is_boundary_port) {
-        status_text("GTKWAVE | Boundary port -- double-click to show more upstream.\n");
+        status_text(node->is_output_port
+                        ? "GTKWAVE | Output port: the queried signal.\n"
+                        : "GTKWAVE | Input boundary port -- double-click to expand just this net "
+                          "one hop upstream.\n");
     } else if (node->is_module_instance && node->href != NULL) {
         jump_to_gate_node_source(node->href);
         status_text("GTKWAVE | Sub-module instance -- double-click or right-click to dissolve "
@@ -1932,35 +2101,53 @@ static gchar *build_flatten_clause(GateSchematicState *state)
     return g_string_free(clause, FALSE);
 }
 
-// Builds the trailing `" <obj> <obj> ... %u %u ... %d"` fragment that,
-// appended right after a `select <cone-expr>` command's own terms,
-// subtracts every object in state->filtered_out from the already-
-// selected cone before submod/show carves/draws it. Yosys's select
-// stack machine unions everything left on the stack once the command
-// ends, so N filtered objects need (N-1) `%u` to fold them into one set
-// before a final `%d` pops that set and subtracts it from the cone --
-// confirmed directly against a real Yosys run: a single trailing object
-// plus `%d` does subtract it correctly, but two objects just pushed
-// one after another ahead of one `%d` does NOT subtract either of them
-// from the cone (`%d` only consumes the top two stack entries, leaving
-// the full original cone selection untouched further down the stack to
-// be re-unioned back in at the end). Returns "" if nothing's filtered.
-static gchar *build_filter_suffix(GateSchematicState *state)
+// One Yosys run for `top_module`/`select_expr` with everything the user
+// has accumulated applied: the root's depth, each expanded net, each
+// filtered-out object (see gate_cone_select.h), plus a probe per expanded
+// net so a vanished one can be reported. *out_log is always set on return
+// (possibly NULL); the caller frees it.
+static gboolean gate_run_query(GateSchematicState *state, const gchar *top_module,
+                               const gchar *select_expr, gboolean use_netlistsvg,
+                               const gchar *flatten_clause, gchar **out_dot_text,
+                               gchar **out_json_text, gchar **out_log, GError **error)
 {
-    if (state->filtered_out == NULL || state->filtered_out->len == 0) {
-        return g_strdup("");
-    }
+    gchar *tail = gate_cone_select_expression(select_expr, state->max_depth, state->expansions,
+                                              state->filtered_out);
+    gchar *probes = gate_cone_probe_script(state->expansions);
 
-    GString *suffix = g_string_new("");
-    for (guint i = 0; i < state->filtered_out->len; i++) {
-        g_string_append_c(suffix, ' ');
-        g_string_append(suffix, (const gchar *)g_ptr_array_index(state->filtered_out, i));
+    gboolean ok = use_netlistsvg
+                      ? run_yosys_json(top_module, select_expr, tail, flatten_clause, probes,
+                                       out_json_text, out_log, error)
+                      : run_yosys(top_module, select_expr, tail, flatten_clause, probes,
+                                  out_dot_text, out_log, error);
+    g_free(tail);
+    g_free(probes);
+    return ok;
+}
+
+static void gate_forget_missing_expansions(GateSchematicState *state, const gchar *yosys_log)
+{
+    if (state->expansions == NULL || state->expansions->len == 0) {
+        return;
     }
-    for (guint i = 1; i < state->filtered_out->len; i++) {
-        g_string_append(suffix, " %u");
+    GPtrArray *missing = gate_cone_missing_seeds(yosys_log, state->expansions);
+    for (guint i = 0; i < missing->len; i++) {
+        const gchar *seed = g_ptr_array_index(missing, i);
+        for (guint j = 0; j < state->expansions->len; j++) {
+            const GateExpansion *e = g_ptr_array_index(state->expansions, j);
+            if (g_str_equal(e->seed, seed)) {
+                g_ptr_array_remove_index(state->expansions, j);
+                break;
+            }
+        }
+        gchar *msg = g_strdup_printf(
+            "GTKWAVE | Couldn't expand '%s': Yosys has no net by that name any more (renamed by "
+            "optimization, or inside an instance that was collapsed) -- dropped.\n",
+            seed);
+        status_text(msg);
+        g_free(msg);
     }
-    g_string_append(suffix, " %d");
-    return g_string_free(suffix, FALSE);
+    g_ptr_array_unref(missing);
 }
 
 // Re-queries Yosys for state->signal_path's fan-in cone at the current
@@ -1990,35 +2177,29 @@ static void gate_refresh_schematic(GateSchematicState *state)
     gchar *dot_text = NULL; /* used only when !use_netlistsvg */
     gchar *json_text = NULL; /* used only when use_netlistsvg */
     gchar *flatten_clause = build_flatten_clause(state);
-    gchar *filter_suffix = build_filter_suffix(state);
+    gchar *yosys_log = NULL; /* last run's log: carries the expansion probes */
     gboolean ok;
 
     if (state->top_module != NULL) {
         gchar *select_expr =
             make_yosys_select(state->top_module, state->select_prefix, state->signal_path);
-        ok = use_netlistsvg
-                 ? run_yosys_json(state->top_module, select_expr, state->max_depth, flatten_clause,
-                                  filter_suffix, &json_text, &error)
-                 : run_yosys(state->top_module, select_expr, state->max_depth, flatten_clause,
-                             filter_suffix, &dot_text, &error);
+        ok = gate_run_query(state, state->top_module, select_expr, use_netlistsvg, flatten_clause,
+                            &dot_text, &json_text, &yosys_log, &error);
         g_free(select_expr);
     } else {
         const gchar *top_module = GLOBALS->netlist_top_module;
         gchar *select_expr = make_yosys_select(top_module, top_module, state->signal_path);
 
-        ok = use_netlistsvg
-                 ? run_yosys_json(top_module, select_expr, state->max_depth, flatten_clause,
-                                  filter_suffix, &json_text, &error)
-                 : run_yosys(top_module, select_expr, state->max_depth, flatten_clause,
-                             filter_suffix, &dot_text, &error);
+        ok = gate_run_query(state, top_module, select_expr, use_netlistsvg, flatten_clause,
+                            &dot_text, &json_text, &yosys_log, &error);
         g_free(select_expr);
 
         // The configured top is very often the VCD's own dump-root scope
         // (see guess_top_module() in netlist_query_ui.c), which for a
-        // design loaded as a full testbench is the testbench itself --
-        // not synthesizable RTL. If that's exactly why Yosys failed, try
-        // again against the real DUT it most likely instantiates, auto-
-        // detected from the source text, before giving up.
+        // design loaded as a full testbench is the testbench itself -- not
+        // synthesizable RTL. If that's exactly why Yosys failed, try again
+        // against the real DUT it most likely instantiates, auto-detected
+        // from the source text, before giving up.
         if (!ok && yosys_error_suggests_testbench(error->message)) {
             gchar *detected_module_type = NULL;
             gchar *detected_instance_name = NULL;
@@ -2032,11 +2213,10 @@ static void gate_refresh_schematic(GateSchematicState *state)
                 gchar *retry_select =
                     make_yosys_select(detected_module_type, instance_prefix, state->signal_path);
 
-                ok = use_netlistsvg
-                         ? run_yosys_json(detected_module_type, retry_select, state->max_depth,
-                                          flatten_clause, filter_suffix, &json_text, &error)
-                         : run_yosys(detected_module_type, retry_select, state->max_depth,
-                                     flatten_clause, filter_suffix, &dot_text, &error);
+                g_free(yosys_log);
+                yosys_log = NULL;
+                ok = gate_run_query(state, detected_module_type, retry_select, use_netlistsvg,
+                                    flatten_clause, &dot_text, &json_text, &yosys_log, &error);
                 g_free(retry_select);
 
                 if (ok) {
@@ -2069,7 +2249,15 @@ static void gate_refresh_schematic(GateSchematicState *state)
     }
 
     g_free(flatten_clause);
-    g_free(filter_suffix);
+
+    // A net the user expanded that Yosys no longer finds (renamed by
+    // optimization, or inside an instance since collapsed) matched nothing,
+    // so the picture is already right without it; drop it so it doesn't sit
+    // in the list forever, and say why nothing seemed to happen.
+    if (ok) {
+        gate_forget_missing_expansions(state, yosys_log);
+    }
+    g_free(yosys_log);
 
     if (!ok) {
         gchar *msg = g_strdup_printf("GTKWAVE | Gate-level schematic failed for '%s': %s\n",

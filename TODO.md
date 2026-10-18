@@ -1023,6 +1023,53 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   but confirmed that doesn't help either, since the renaming/elimination
   happens *during* `submod` itself, not before it.
 
+- **Gate-level Cone Window: per-net Start small / Expand** (double-click an
+  input boundary port). The shown cone is now a union of seeds -- the root
+  signal at the spinner's depth, plus one `(net, hops)` entry per boundary
+  port the user has double-clicked -- instead of one global hop count:
+  `select <root> %ci<N> <net> %ci<h> ... %u... <filtered> ... %d`
+  (`src/gate_cone_select.c`, GTK-free). Double-clicking a boundary port pulls
+  in only that net's driver (one hop), leaving every other branch alone;
+  verified live on a three-level design: `acc` -> the 4 flops, `alu_y` ->
+  just `u_alu`, `rd` -> just `u_rf`, each adding only its own new boundary
+  ports. Right-click now offers "Shrink expansion at ..." and "Restore ..."
+  (un-filter), the undo gestures that were missing: neither leaves anything
+  on the diagram to click, so they're menu entries like Collapse. Double-
+  clicking the root's own output port explains itself instead of doing
+  nothing.
+  Design driven by two checks against a real Yosys, not assumptions:
+  * Object names ARE deterministic run to run (identical across runs --
+    unlike slang-netlist's, see the RTL layout item), so the structural-key
+    machinery that item needed isn't required here.
+  * But names are NOT stable across a change to the flatten set: anonymous
+    gates created after `flatten` come from a global counter
+    (`$auto$ff.cc:337:slice$227` became `...$228` once `u_alu` was
+    dissolved). Declared nets keep their names, so expansions are seeded
+    from NET names, never cell names -- and each is probed with
+    `select -count` so a net that has vanished is reported and dropped
+    rather than silently ignored.
+  This also exposed a latent bug in the existing Filter Out: it stores cell
+  names, so after a Dissolve/Collapse a saved filter on an anonymous gate
+  could silently remove a DIFFERENT gate. Filters and expansions naming
+  `$auto$` objects are now dropped (with a status message) when the
+  dissolve set changes; filters on declared names are kept.
+  Tested against real Yosys (`src/gate_cone_select_test.c`, fixture
+  `lib/libgtkwave/test/files/gate_cone_design.sv`), including the `%u`/`%d`
+  stack arithmetic with two expansions plus two filters -- a miscount there
+  silently subtracts nothing -- and a test pinning the name-stability premise
+  so a Yosys release that changes it is noticed.
+  **Known gaps:** the clickable boundary ports only exist on the netlistsvg
+  path (the Graphviz fallback never marks them -- unchanged, pre-existing),
+  and netlistsvg isn't installed by default (verified here with it installed
+  in a scratch dir only); fan-in only, no downstream (`%co`) expansion;
+  **Dissolve's shared depth budget is mitigated, not eliminated** -- after
+  `flatten`, an instance's gates are anonymous (no `u_alu.` prefix, only its
+  declared wires keep one), so its interior can't be selected by name, and
+  the interior can't be separated from the rest of the cone without knowing
+  port directions the flattened netlist no longer carries; the user now
+  expands inside a dissolved instance one net at a time instead. Expansions,
+  like dissolve and filter, last for the life of the window (not saved).
+
 - **RTL schematic layout editing** (schematic toolbar: Move Nodes / Reset
   Layout). Per-node position overrides layered on top of Graphviz's own
   layout: with "Move Nodes" on, left-drag any box (structural
@@ -1144,56 +1191,13 @@ the conversation history for the full reasoning behind this ordering.
    from anything else on this list -- pick up when there's a specific
    need.
 
-3. **Gate-level schematic "Cone Window"** (incremental filter/expand/
-   dissolve, matching how Verdi's nSchema and Concept Engineering's own
-   StarVision -- a past gtkwave contributor, per `bus_ops.c`'s copyright
-   line -- both work: start from one small element, grow the diagram
-   one hop at a time on request, keep sub-modules as black boxes until
-   explicitly asked to dissolve). "Start small"/"Expand" (global
-   `%ci<N>` hop-count depth spinner), "Dissolve" (per-instance
-   `flatten`, black-box by default, with a right-click "Collapse" to
-   undo it), and "Filter Out" (right-click, multi-select via
-   shift-click) are all done -- see Done section above, including
-   Dissolve's known shared-depth-budget limitation and Filter's missing
-   un-filter gesture. What's left is the richer per-net incremental
-   model:
-   - **Per-net "Start small"/"Expand"**: rather than one global hop-count
-     limit, track the actual set of included Yosys object names
-     (`included_objects`, seeded with just the root signal) and grow it
-     one specific net at a time -- clicking a particular boundary port
-     pulls in only what's immediately upstream/downstream of *that* net
-     (a fresh one-hop `%ci`/`%co` query seeded from the clicked port's
-     net name, unioned into `included_objects`), rather than today's
-     "expand everything at the boundary by 2 more hops". This would also
-     fix Dissolve's shared-depth-budget limitation, since each
-     instance's internal hops would no longer compete with every other
-     instance for one global depth number, and would make "un-filter"
-     natural too (just remove the object from `included_objects` again,
-     the same shape as Dissolve's existing Collapse). Confirmed during
-     scoping: a 1-hop selection around `alu_result` produced a 3-cell,
-     356x184px diagram (just the `alu` instance, kept as one black box,
-     with clean named ports) vs. the always-render-everything ~450-cell,
-     5399x16100px full cone -- and a fresh Yosys invocation per
-     expand-click (re-synthesizing from source each time, since Yosys
-     has no interactive/incremental session mode) was fast enough in ad
-     hoc testing (well under a second), though not stress-tested
-     against a large real design yet.
-   - Click/selection semantics would stay as they are now (plain-click
-     selects, shift-click multi-selects, right-click menu offers
-     Dissolve/Filter Out/Collapse as applicable, double-click keeps its
-     boundary-expand/single-instance-dissolve fast path) -- this item is
-     about the underlying *mechanism* (per-net vs. global-hop-count),
-     not the interaction model, which is already in place.
-   - Known related gap, NOT solved by this plan: selecting/cross-probing
-     an individual **wire** (as opposed to a gate/port box) still isn't
-     possible -- netlistsvg's SVG gives no net identity to the
-     connecting lines themselves, only to the boxes at either end. Would
-     need patching netlistsvg or a different renderer; out of scope
-     here.
-   - The RTL (slang-netlist) schematic view's own "start small, expand"
-     sibling piece is now done -- see above (it has no dissolve concept
-     of its own, since it's pre-synthesis and has no gates to black-box
-     module instances around).
+3. ~~**Gate-level schematic "Cone Window"**~~ -- per-net Start small /
+   Expand is done, see the Done section above (Dissolve, Filter Out and the
+   RTL view's own start-small/expand were done earlier). Still open from
+   this item: selecting/cross-probing an individual **wire** (as opposed to
+   a gate/port box) -- netlistsvg's SVG gives no net identity to the
+   connecting lines themselves, only to the boxes at either end, so it
+   needs patching netlistsvg or a different renderer.
 
 4. ~~**RTL schematic layout editing**~~ -- done, see the Done section above.
 
