@@ -13,6 +13,7 @@
  * window and don't do the op. same for "dnd_state".
  */
 
+#include "auto_update.h"
 #include "globals.h"
 #include <config.h>
 #include <string.h>
@@ -2669,6 +2670,31 @@ void menu_reload_waveform(gpointer null_data, guint callback_action, GtkWidget *
     reload_into_new_context();
 }
 
+void menu_auto_update(gpointer null_data, guint callback_action, GtkWidget *widget)
+{
+    static gboolean correcting = FALSE;
+
+    (void)null_data;
+    (void)callback_action;
+    (void)widget;
+
+    if (correcting) {
+        return;
+    }
+
+    GtkCheckMenuItem *item = GTK_CHECK_MENU_ITEM(menu_wlist[WV_MENU_FAUP]);
+    gboolean want = gtk_check_menu_item_get_active(item);
+    gboolean got = auto_update_set_enabled(want);
+
+    // A refused enable (not FST, skip window, ...) must not leave the
+    // checkbox ticked; un-ticking it re-enters this handler, hence the guard.
+    if (got != want) {
+        correcting = TRUE;
+        gtk_check_menu_item_set_active(item, got);
+        correcting = FALSE;
+    }
+}
+
 void menu_reload_waveform_marshal(GtkWidget *widget, gpointer data)
 {
     menu_reload_waveform(data, 0, widget);
@@ -5061,6 +5087,7 @@ static gtkwave_mlist_t menu_items[] = {
                 menu_reload_waveform,
                 WV_MENU_FRW,
                 "<Item>"),
+    WAVE_GTKIFE("/File/Auto Update", NULL, menu_auto_update, WV_MENU_FAUP, "<ToggleItem>"),
     WAVE_GTKIFE("/File/Export/Write VCD File As",
                 NULL,
                 menu_write_vcd_file,
@@ -6655,6 +6682,8 @@ GtkWidget *alt_menu_top(GtkWidget *window)
     if (GLOBALS->loaded_file_type == DUMPLESS_FILE) {
         gtk_widget_destroy(menu_wlist[WV_MENU_FRW]);
         menu_wlist[WV_MENU_FRW] = NULL;
+        gtk_widget_destroy(menu_wlist[WV_MENU_FAUP]);
+        menu_wlist[WV_MENU_FAUP] = NULL;
     }
 
     gtk_window_add_accel_group(GTK_WINDOW(window), global_accel);

@@ -506,7 +506,7 @@ static GtkWidget *add_column(GtkWidget *view, const gchar *title, gint col, gboo
 void event_sequence_view_show(void)
 {
     if (GLOBALS->loaded_file_name == NULL || GLOBALS->loaded_file_type == DUMPLESS_FILE) {
-        status_text("GTKWAVE | Event Sequence needs a loaded VCD or FST dump file.\n");
+        status_text("Event Sequence needs a loaded VCD or FST dump file.\n");
         return;
     }
 

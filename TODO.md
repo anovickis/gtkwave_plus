@@ -1023,6 +1023,36 @@ flat category dump. Rationale given wherever the ranking isn't obvious.
   but confirmed that doesn't help either, since the renaming/elimination
   happens *during* `submod` itself, not before it.
 
+- **Auto Update for FST** (File > Auto Update). Polls the loaded FST every
+  2s and, when a still-running simulation has flushed new time to it,
+  reloads in place through the existing File > Reload Waveform path
+  (traces, markers, zoom restored from its saved state), then keeps the
+  view pinned to the newest data if it was showing the end -- a view the
+  user scrolled back is left alone. Deliberately built on reload rather
+  than the originally planned "append history to an imported node" APIs
+  (6-10 files in `lib/libgtkwave`): FST imports lazily, so a reload only
+  re-reads the hierarchy plus the displayed signals, and that avoids
+  mutating `GwHistEnt` chains that aliases, `harray`, and composite bus
+  vectors all hold copies of.
+  The poll (`src/auto_update_poll.c`, GTK-free, tested against a real
+  still-open `fstWriter`) never trusts that the file is readable or that
+  growth is visible: an in-progress FST only opens once its hierarchy has
+  been flushed, and then only shows data up to the last *flushed* block,
+  in bursts. So it gates on `stat()`, then probes with `fstReaderOpen()`,
+  then compares the file's own end time (`!=`, so a rewritten/shorter
+  re-run reloads too). An unreadable file just means "try next tick" --
+  this matters because the reload path itself blocks in a `sleep()` retry
+  loop on a failed load. Verified end to end headless: the loaded range
+  grew 170 -> 250 -> 310 -> 350 ... one reload per flushed burst, none
+  between, and the pinned view followed (start 0 -> 246 -> 286 ...).
+  **Known gaps:** FST only (VCD refused with a message) -- but note the
+  reload route may make VCD cheap too, untested; refused with a
+  skip-start/skip-end window (a reload would silently drop it); a full
+  reload per update re-reads the hierarchy, so a very large design will
+  want a longer interval (fixed at 2s, no UI/rc setting yet); transient
+  UI state outside the save file resets across a reload; a race remains
+  if the file becomes unreadable between the probe and the reload.
+
 - **Event Sequence pane** (signal popover -> "Event Sequence"). For one
   timestamp (defaults to the primary marker; Go / At Marker / Prev / Next,
   where Prev/Next step between times any displayed signal changes), lists
@@ -1134,24 +1164,11 @@ the conversation history for the full reasoning behind this ordering.
    Collapse/expand a module to a black box, also originally bundled
    here, is now covered by item 3's dissolve mechanism instead.)
 
-5. **Auto Update** (live-tail a still-running simulation). A genuinely
-    different workflow (active-sim debugging vs. post-hoc analysis),
-    real nWave feature. Investigated this session: no existing "re-scan
-    the currently-open dump file for appended data" capability at all
-    (confirmed no stub, no timer, no half-built path). VCD's parser
-    (`lib/libgtkwave/src/gw-vcd-loader.c`) closes its file handle and
-    discards its VCD-id-to-node symbol table after the initial load, and
-    each node's history is a frozen/immutable `GwVlist` after that --
-    genuinely not resumable as built. FST is more favorable (its reader
-    context stays alive for the dump file's lifetime and its block-table
-    design is naturally growable) but still needs a "resume block scan
-    from last position" variant. Real implementation needs new
-    "append more history to an already-imported node" APIs in
-    `GwVcdFile`/`GwFstFile`, a `GwTimeRange` mutability/replacement path,
-    and a new id-remapping/resumable-parser-state object for VCD --
-    roughly 6-10 files in `lib/libgtkwave` plus a new driver in `src/`.
-    Medium-to-large, not a bounded single-session task; deferred rather
-    than rushed, same reasoning as Waveform Compare.
+5. **Auto Update** -- FST done (see Done above). Remaining: VCD (its
+    loader discards the id table after load, so a true incremental path is
+    still hard, but a reload-based route as used for FST is worth trying
+    first), a configurable interval, and an incremental append path if the
+    full-reload cost proves too high on large designs.
 
 6. ~~**Event Sequence pane**~~ -- done, see the Done section above.
 

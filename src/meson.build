@@ -10,6 +10,8 @@ gtkwave_resources = gnome.compile_resources(
 
 gtkwave_sources = [
     'analyzer.c',
+    'auto_update.c',
+    'auto_update_poll.c',
     'baseconvert.c',
     'bitvec.c',
     'bsearch.c',
@@ -130,6 +132,16 @@ event_sequence_test = executable(
     c_args: warning_args,
 )
 test('event_sequence', event_sequence_test)
+
+# auto_update poll-decision unit test (GTK-free: glib + libfst only)
+
+auto_update_poll_test = executable(
+    'auto_update_poll_test',
+    ['auto_update_poll.c', 'auto_update_poll_test.c'],
+    dependencies: [glib_dep, libfst_dep],
+    c_args: warning_args,
+)
+test('auto_update_poll', auto_update_poll_test)
 
 # twinwave
 
