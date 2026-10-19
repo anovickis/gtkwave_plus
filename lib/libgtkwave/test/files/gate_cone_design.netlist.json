@@ -1,0 +1,1658 @@
+{
+  "blackBoxes": [],
+  "edges": [
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 1,
+      "symbol": {
+        "location": {
+          "column": 22,
+          "fileIndex": 0,
+          "line": 32
+        },
+        "name": "clk",
+        "path": "cpu_top.clk"
+      },
+      "target": 8
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "PosEdge",
+      "source": 1,
+      "symbol": {
+        "location": {
+          "column": 22,
+          "fileIndex": 0,
+          "line": 32
+        },
+        "name": "clk",
+        "path": "cpu_top.clk"
+      },
+      "target": 30
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 2,
+      "symbol": {
+        "location": {
+          "column": 39,
+          "fileIndex": 0,
+          "line": 32
+        },
+        "name": "op",
+        "path": "cpu_top.op"
+      },
+      "target": 16
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 3,
+      "symbol": {
+        "location": {
+          "column": 55,
+          "fileIndex": 0,
+          "line": 32
+        },
+        "name": "din",
+        "path": "cpu_top.din"
+      },
+      "target": 15
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 3,
+      "symbol": {
+        "location": {
+          "column": 55,
+          "fileIndex": 0,
+          "line": 32
+        },
+        "name": "din",
+        "path": "cpu_top.din"
+      },
+      "target": 28
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 4,
+      "symbol": {
+        "location": {
+          "column": 66,
+          "fileIndex": 0,
+          "line": 32
+        },
+        "name": "we",
+        "path": "cpu_top.we"
+      },
+      "target": 9
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 5,
+      "symbol": {
+        "location": {
+          "column": 28,
+          "fileIndex": 0,
+          "line": 33
+        },
+        "name": "wa",
+        "path": "cpu_top.wa"
+      },
+      "target": 10
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 6,
+      "symbol": {
+        "location": {
+          "column": 44,
+          "fileIndex": 0,
+          "line": 33
+        },
+        "name": "ra",
+        "path": "cpu_top.ra"
+      },
+      "target": 11
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "PosEdge",
+      "source": 8,
+      "symbol": {
+        "location": {
+          "column": 22,
+          "fileIndex": 0,
+          "line": 16
+        },
+        "name": "clk",
+        "path": "cpu_top.u_rf.clk"
+      },
+      "target": 40
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "PosEdge",
+      "source": 8,
+      "symbol": {
+        "location": {
+          "column": 22,
+          "fileIndex": 0,
+          "line": 16
+        },
+        "name": "clk",
+        "path": "cpu_top.u_rf.clk"
+      },
+      "target": 41
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "PosEdge",
+      "source": 8,
+      "symbol": {
+        "location": {
+          "column": 22,
+          "fileIndex": 0,
+          "line": 16
+        },
+        "name": "clk",
+        "path": "cpu_top.u_rf.clk"
+      },
+      "target": 42
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "PosEdge",
+      "source": 8,
+      "symbol": {
+        "location": {
+          "column": 22,
+          "fileIndex": 0,
+          "line": 16
+        },
+        "name": "clk",
+        "path": "cpu_top.u_rf.clk"
+      },
+      "target": 43
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 9,
+      "symbol": {
+        "location": {
+          "column": 33,
+          "fileIndex": 0,
+          "line": 16
+        },
+        "name": "we",
+        "path": "cpu_top.u_rf.we"
+      },
+      "target": 27
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 10,
+      "symbol": {
+        "location": {
+          "column": 49,
+          "fileIndex": 0,
+          "line": 16
+        },
+        "name": "wa",
+        "path": "cpu_top.u_rf.wa"
+      },
+      "target": 31
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 11,
+      "symbol": {
+        "location": {
+          "column": 65,
+          "fileIndex": 0,
+          "line": 16
+        },
+        "name": "ra",
+        "path": "cpu_top.u_rf.ra"
+      },
+      "target": 26
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 12,
+      "symbol": {
+        "location": {
+          "column": 28,
+          "fileIndex": 0,
+          "line": 17
+        },
+        "name": "wd",
+        "path": "cpu_top.u_rf.wd"
+      },
+      "target": 32
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 12,
+      "symbol": {
+        "location": {
+          "column": 28,
+          "fileIndex": 0,
+          "line": 17
+        },
+        "name": "wd",
+        "path": "cpu_top.u_rf.wd"
+      },
+      "target": 33
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 12,
+      "symbol": {
+        "location": {
+          "column": 28,
+          "fileIndex": 0,
+          "line": 17
+        },
+        "name": "wd",
+        "path": "cpu_top.u_rf.wd"
+      },
+      "target": 35
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 12,
+      "symbol": {
+        "location": {
+          "column": 28,
+          "fileIndex": 0,
+          "line": 17
+        },
+        "name": "wd",
+        "path": "cpu_top.u_rf.wd"
+      },
+      "target": 37
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 13,
+      "symbol": {
+        "location": {
+          "column": 14,
+          "fileIndex": 0,
+          "line": 34
+        },
+        "name": "rd",
+        "path": "cpu_top.rd"
+      },
+      "target": 14
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 14,
+      "symbol": {
+        "location": {
+          "column": 24,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "a",
+        "path": "cpu_top.u_alu.a"
+      },
+      "target": 19
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 14,
+      "symbol": {
+        "location": {
+          "column": 24,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "a",
+        "path": "cpu_top.u_alu.a"
+      },
+      "target": 20
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 14,
+      "symbol": {
+        "location": {
+          "column": 24,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "a",
+        "path": "cpu_top.u_alu.a"
+      },
+      "target": 22
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 14,
+      "symbol": {
+        "location": {
+          "column": 24,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "a",
+        "path": "cpu_top.u_alu.a"
+      },
+      "target": 24
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 15,
+      "symbol": {
+        "location": {
+          "column": 39,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "b",
+        "path": "cpu_top.u_alu.b"
+      },
+      "target": 19
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 15,
+      "symbol": {
+        "location": {
+          "column": 39,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "b",
+        "path": "cpu_top.u_alu.b"
+      },
+      "target": 20
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 15,
+      "symbol": {
+        "location": {
+          "column": 39,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "b",
+        "path": "cpu_top.u_alu.b"
+      },
+      "target": 22
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 15,
+      "symbol": {
+        "location": {
+          "column": 39,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "b",
+        "path": "cpu_top.u_alu.b"
+      },
+      "target": 24
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 16,
+      "symbol": {
+        "location": {
+          "column": 54,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "op",
+        "path": "cpu_top.u_alu.op"
+      },
+      "target": 18
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 17,
+      "symbol": {
+        "location": {
+          "column": 14,
+          "fileIndex": 0,
+          "line": 35
+        },
+        "name": "alu_y",
+        "path": "cpu_top.alu_y"
+      },
+      "target": 29
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 18,
+      "symbol": {},
+      "target": 19
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 18,
+      "symbol": {},
+      "target": 20
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 18,
+      "symbol": {},
+      "target": 22
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 18,
+      "symbol": {},
+      "target": 24
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 19,
+      "symbol": {},
+      "target": 21
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 19,
+      "symbol": {
+        "location": {
+          "column": 75,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "y",
+        "path": "cpu_top.u_alu.y"
+      },
+      "target": 17
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 20,
+      "symbol": {},
+      "target": 21
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 20,
+      "symbol": {
+        "location": {
+          "column": 75,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "y",
+        "path": "cpu_top.u_alu.y"
+      },
+      "target": 17
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 21,
+      "symbol": {},
+      "target": 23
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 22,
+      "symbol": {},
+      "target": 23
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 22,
+      "symbol": {
+        "location": {
+          "column": 75,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "y",
+        "path": "cpu_top.u_alu.y"
+      },
+      "target": 17
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 23,
+      "symbol": {},
+      "target": 25
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 24,
+      "symbol": {},
+      "target": 25
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 24,
+      "symbol": {
+        "location": {
+          "column": 75,
+          "fileIndex": 0,
+          "line": 5
+        },
+        "name": "y",
+        "path": "cpu_top.u_alu.y"
+      },
+      "target": 17
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 26,
+      "symbol": {
+        "location": {
+          "column": 45,
+          "fileIndex": 0,
+          "line": 17
+        },
+        "name": "rd",
+        "path": "cpu_top.u_rf.rd"
+      },
+      "target": 13
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 27,
+      "symbol": {},
+      "target": 31
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 27,
+      "symbol": {},
+      "target": 39
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 28,
+      "symbol": {
+        "location": {
+          "column": 61,
+          "fileIndex": 0,
+          "line": 33
+        },
+        "name": "result",
+        "path": "cpu_top.result"
+      },
+      "target": 7
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 29,
+      "symbol": {
+        "location": {
+          "column": 13,
+          "fileIndex": 0,
+          "line": 36
+        },
+        "name": "acc",
+        "path": "cpu_top.acc"
+      },
+      "target": 30
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 30,
+      "symbol": {
+        "location": {
+          "column": 13,
+          "fileIndex": 0,
+          "line": 36
+        },
+        "name": "acc",
+        "path": "cpu_top.acc"
+      },
+      "target": 12
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 30,
+      "symbol": {
+        "location": {
+          "column": 13,
+          "fileIndex": 0,
+          "line": 36
+        },
+        "name": "acc",
+        "path": "cpu_top.acc"
+      },
+      "target": 28
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 31,
+      "symbol": {},
+      "target": 32
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 31,
+      "symbol": {},
+      "target": 33
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 31,
+      "symbol": {},
+      "target": 35
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 31,
+      "symbol": {},
+      "target": 37
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 32,
+      "symbol": {},
+      "target": 34
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 32,
+      "symbol": {
+        "location": {
+          "column": 13,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r0",
+        "path": "cpu_top.u_rf.r0"
+      },
+      "target": 40
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 33,
+      "symbol": {},
+      "target": 34
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 33,
+      "symbol": {
+        "location": {
+          "column": 17,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r1",
+        "path": "cpu_top.u_rf.r1"
+      },
+      "target": 42
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 34,
+      "symbol": {},
+      "target": 36
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 35,
+      "symbol": {},
+      "target": 36
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 35,
+      "symbol": {
+        "location": {
+          "column": 21,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r2",
+        "path": "cpu_top.u_rf.r2"
+      },
+      "target": 41
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 36,
+      "symbol": {},
+      "target": 38
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 37,
+      "symbol": {},
+      "target": 38
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 37,
+      "symbol": {
+        "location": {
+          "column": 25,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r3",
+        "path": "cpu_top.u_rf.r3"
+      },
+      "target": 43
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 38,
+      "symbol": {},
+      "target": 39
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 40,
+      "symbol": {
+        "location": {
+          "column": 13,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r0",
+        "path": "cpu_top.u_rf.r0"
+      },
+      "target": 26
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 41,
+      "symbol": {
+        "location": {
+          "column": 21,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r2",
+        "path": "cpu_top.u_rf.r2"
+      },
+      "target": 26
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 42,
+      "symbol": {
+        "location": {
+          "column": 17,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r1",
+        "path": "cpu_top.u_rf.r1"
+      },
+      "target": 26
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "disabled": false,
+      "edgeKind": "None",
+      "source": 43,
+      "symbol": {
+        "location": {
+          "column": 25,
+          "fileIndex": 0,
+          "line": 18
+        },
+        "name": "r3",
+        "path": "cpu_top.u_rf.r3"
+      },
+      "target": 26
+    }
+  ],
+  "fileTable": [
+    "lib/libgtkwave/test/files/gate_cone_design.sv"
+  ],
+  "nodes": [
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "direction": "In",
+      "id": 1,
+      "kind": "Port",
+      "location": {
+        "column": 22,
+        "fileIndex": 0,
+        "line": 32
+      },
+      "name": "clk",
+      "path": "cpu_top.clk"
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "direction": "In",
+      "id": 2,
+      "kind": "Port",
+      "location": {
+        "column": 39,
+        "fileIndex": 0,
+        "line": 32
+      },
+      "name": "op",
+      "path": "cpu_top.op"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "direction": "In",
+      "id": 3,
+      "kind": "Port",
+      "location": {
+        "column": 55,
+        "fileIndex": 0,
+        "line": 32
+      },
+      "name": "din",
+      "path": "cpu_top.din"
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "direction": "In",
+      "id": 4,
+      "kind": "Port",
+      "location": {
+        "column": 66,
+        "fileIndex": 0,
+        "line": 32
+      },
+      "name": "we",
+      "path": "cpu_top.we"
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "direction": "In",
+      "id": 5,
+      "kind": "Port",
+      "location": {
+        "column": 28,
+        "fileIndex": 0,
+        "line": 33
+      },
+      "name": "wa",
+      "path": "cpu_top.wa"
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "direction": "In",
+      "id": 6,
+      "kind": "Port",
+      "location": {
+        "column": 44,
+        "fileIndex": 0,
+        "line": 33
+      },
+      "name": "ra",
+      "path": "cpu_top.ra"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "direction": "Out",
+      "id": 7,
+      "kind": "Port",
+      "location": {
+        "column": 61,
+        "fileIndex": 0,
+        "line": 33
+      },
+      "name": "result",
+      "path": "cpu_top.result"
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "direction": "In",
+      "id": 8,
+      "kind": "Port",
+      "location": {
+        "column": 22,
+        "fileIndex": 0,
+        "line": 16
+      },
+      "name": "clk",
+      "path": "cpu_top.u_rf.clk"
+    },
+    {
+      "bounds": [
+        0,
+        0
+      ],
+      "direction": "In",
+      "id": 9,
+      "kind": "Port",
+      "location": {
+        "column": 33,
+        "fileIndex": 0,
+        "line": 16
+      },
+      "name": "we",
+      "path": "cpu_top.u_rf.we"
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "direction": "In",
+      "id": 10,
+      "kind": "Port",
+      "location": {
+        "column": 49,
+        "fileIndex": 0,
+        "line": 16
+      },
+      "name": "wa",
+      "path": "cpu_top.u_rf.wa"
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "direction": "In",
+      "id": 11,
+      "kind": "Port",
+      "location": {
+        "column": 65,
+        "fileIndex": 0,
+        "line": 16
+      },
+      "name": "ra",
+      "path": "cpu_top.u_rf.ra"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "direction": "In",
+      "id": 12,
+      "kind": "Port",
+      "location": {
+        "column": 28,
+        "fileIndex": 0,
+        "line": 17
+      },
+      "name": "wd",
+      "path": "cpu_top.u_rf.wd"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "direction": "Out",
+      "id": 13,
+      "kind": "Port",
+      "location": {
+        "column": 45,
+        "fileIndex": 0,
+        "line": 17
+      },
+      "name": "rd",
+      "path": "cpu_top.u_rf.rd"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "direction": "In",
+      "id": 14,
+      "kind": "Port",
+      "location": {
+        "column": 24,
+        "fileIndex": 0,
+        "line": 5
+      },
+      "name": "a",
+      "path": "cpu_top.u_alu.a"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "direction": "In",
+      "id": 15,
+      "kind": "Port",
+      "location": {
+        "column": 39,
+        "fileIndex": 0,
+        "line": 5
+      },
+      "name": "b",
+      "path": "cpu_top.u_alu.b"
+    },
+    {
+      "bounds": [
+        0,
+        1
+      ],
+      "direction": "In",
+      "id": 16,
+      "kind": "Port",
+      "location": {
+        "column": 54,
+        "fileIndex": 0,
+        "line": 5
+      },
+      "name": "op",
+      "path": "cpu_top.u_alu.op"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "direction": "Out",
+      "id": 17,
+      "kind": "Port",
+      "location": {
+        "column": 75,
+        "fileIndex": 0,
+        "line": 5
+      },
+      "name": "y",
+      "path": "cpu_top.u_alu.y"
+    },
+    {
+      "id": 18,
+      "kind": "Case",
+      "location": {
+        "column": 5,
+        "fileIndex": 0,
+        "line": 7
+      }
+    },
+    {
+      "id": 19,
+      "kind": "Assignment",
+      "location": {
+        "column": 13,
+        "fileIndex": 0,
+        "line": 8
+      }
+    },
+    {
+      "id": 20,
+      "kind": "Assignment",
+      "location": {
+        "column": 13,
+        "fileIndex": 0,
+        "line": 9
+      }
+    },
+    {
+      "id": 21,
+      "kind": "Merge"
+    },
+    {
+      "id": 22,
+      "kind": "Assignment",
+      "location": {
+        "column": 13,
+        "fileIndex": 0,
+        "line": 10
+      }
+    },
+    {
+      "id": 23,
+      "kind": "Merge"
+    },
+    {
+      "id": 24,
+      "kind": "Assignment",
+      "location": {
+        "column": 16,
+        "fileIndex": 0,
+        "line": 11
+      }
+    },
+    {
+      "id": 25,
+      "kind": "Merge"
+    },
+    {
+      "id": 26,
+      "kind": "Assignment",
+      "location": {
+        "column": 10,
+        "fileIndex": 0,
+        "line": 29
+      }
+    },
+    {
+      "id": 27,
+      "kind": "Conditional",
+      "location": {
+        "column": 5,
+        "fileIndex": 0,
+        "line": 20
+      }
+    },
+    {
+      "id": 28,
+      "kind": "Assignment",
+      "location": {
+        "column": 10,
+        "fileIndex": 0,
+        "line": 40
+      }
+    },
+    {
+      "id": 29,
+      "kind": "Assignment",
+      "location": {
+        "column": 25,
+        "fileIndex": 0,
+        "line": 39
+      }
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "id": 30,
+      "kind": "State",
+      "location": {
+        "column": 13,
+        "fileIndex": 0,
+        "line": 36
+      },
+      "name": "acc",
+      "path": "cpu_top.acc"
+    },
+    {
+      "id": 31,
+      "kind": "Case",
+      "location": {
+        "column": 7,
+        "fileIndex": 0,
+        "line": 21
+      }
+    },
+    {
+      "id": 32,
+      "kind": "Assignment",
+      "location": {
+        "column": 15,
+        "fileIndex": 0,
+        "line": 22
+      }
+    },
+    {
+      "id": 33,
+      "kind": "Assignment",
+      "location": {
+        "column": 15,
+        "fileIndex": 0,
+        "line": 23
+      }
+    },
+    {
+      "id": 34,
+      "kind": "Merge"
+    },
+    {
+      "id": 35,
+      "kind": "Assignment",
+      "location": {
+        "column": 15,
+        "fileIndex": 0,
+        "line": 24
+      }
+    },
+    {
+      "id": 36,
+      "kind": "Merge"
+    },
+    {
+      "id": 37,
+      "kind": "Assignment",
+      "location": {
+        "column": 18,
+        "fileIndex": 0,
+        "line": 25
+      }
+    },
+    {
+      "id": 38,
+      "kind": "Merge"
+    },
+    {
+      "id": 39,
+      "kind": "Merge"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "id": 40,
+      "kind": "State",
+      "location": {
+        "column": 13,
+        "fileIndex": 0,
+        "line": 18
+      },
+      "name": "r0",
+      "path": "cpu_top.u_rf.r0"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "id": 41,
+      "kind": "State",
+      "location": {
+        "column": 21,
+        "fileIndex": 0,
+        "line": 18
+      },
+      "name": "r2",
+      "path": "cpu_top.u_rf.r2"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "id": 42,
+      "kind": "State",
+      "location": {
+        "column": 17,
+        "fileIndex": 0,
+        "line": 18
+      },
+      "name": "r1",
+      "path": "cpu_top.u_rf.r1"
+    },
+    {
+      "bounds": [
+        0,
+        3
+      ],
+      "id": 43,
+      "kind": "State",
+      "location": {
+        "column": 25,
+        "fileIndex": 0,
+        "line": 18
+      },
+      "name": "r3",
+      "path": "cpu_top.u_rf.r3"
+    }
+  ],
+  "version": 3
+}

@@ -161,4 +161,9 @@ GPtrArray *gw_netlist_query_get_sensitivity(GwNetlistQuery *self,
  * Same ownership contract as get_drivers(). */
 GPtrArray *gw_netlist_query_get_registers(GwNetlistQuery *self, GError **error);
 
+/* The whole elaborated design graph as slang-netlist's own JSON
+ * (`--save-netlist`: nodes, edges, source locations, register clock edges).
+ * Parse it with netlist_graph_new(). Caller g_free()s the text. */
+gchar *gw_netlist_query_get_graph_json(GwNetlistQuery *self, GError **error);
+
 G_END_DECLS

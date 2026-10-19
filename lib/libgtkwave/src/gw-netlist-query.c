@@ -1,6 +1,8 @@
 #include "gw-netlist-query.h"
 #include <json-glib/json-glib.h>
+#include <glib/gstdio.h>
 #include <string.h>
+#include <unistd.h>
 
 // clang-format off
 G_DEFINE_QUARK(gw-netlist-query-error-quark, gw_netlist_query_error)
@@ -493,4 +495,31 @@ GPtrArray *gw_netlist_query_get_registers(GwNetlistQuery *self, GError **error)
     GPtrArray *edges = parse_edges(json_text, mapping, error);
     g_free(json_text);
     return edges;
+}
+
+gchar *gw_netlist_query_get_graph_json(GwNetlistQuery *self, GError **error)
+{
+    g_return_val_if_fail(GW_IS_NETLIST_QUERY(self), NULL);
+
+    gchar *tmp_path = NULL;
+    gint fd = g_file_open_tmp("gtkwave-netlist-XXXXXX.json", &tmp_path, error);
+    if (fd < 0) {
+        return NULL;
+    }
+    close(fd);
+
+    gchar *extra_args[] = {(gchar *)"-q", (gchar *)"--save-netlist", tmp_path, NULL};
+    gchar *out = run_argv(self, extra_args, error);
+    gchar *json_text = NULL;
+    if (out != NULL) {
+        gsize len = 0;
+        if (!g_file_get_contents(tmp_path, &json_text, &len, error)) {
+            json_text = NULL;
+        }
+        g_free(out);
+    }
+
+    g_unlink(tmp_path);
+    g_free(tmp_path);
+    return json_text;
 }

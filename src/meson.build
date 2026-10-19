@@ -27,6 +27,10 @@ gtkwave_sources = [
     'entry.c',
     'event_sequence.c',
     'event_sequence_view.c',
+    'netlist_graph.c',
+    'cause_trace.c',
+    'cause_trace_view.c',
+    'source_link.c',
     'dump_file_main.c',
     'fetchbuttons.c',
     'fgetdynamic.c',
@@ -143,6 +147,33 @@ event_sequence_test = executable(
     c_args: warning_args,
 )
 test('event_sequence', event_sequence_test)
+
+# netlist_graph unit test (GTK-free: glib + json-glib), against a netlist
+# saved from lib/libgtkwave/test/files/gate_cone_design.sv
+
+netlist_graph_test = executable(
+    'netlist_graph_test',
+    ['netlist_graph.c', 'netlist_graph_test.c'],
+    dependencies: [glib_dep, json_glib_dep],
+    c_args: warning_args,
+)
+test(
+    'netlist_graph',
+    netlist_graph_test,
+    args: [files('../lib/libgtkwave/test/files/gate_cone_design.netlist.json')],
+)
+
+cause_trace_test = executable(
+    'cause_trace_test',
+    ['cause_trace.c', 'netlist_graph.c', 'cause_trace_test.c'],
+    dependencies: [glib_dep, json_glib_dep],
+    c_args: warning_args,
+)
+test(
+    'cause_trace',
+    cause_trace_test,
+    args: [files('../lib/libgtkwave/test/files/gate_cone_design.netlist.json')],
+)
 
 # auto_update poll-decision unit test (GTK-free: glib + libfst only)
 

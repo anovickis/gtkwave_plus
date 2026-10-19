@@ -1364,6 +1364,33 @@ the conversation history for the full reasoning behind this ordering.
     speculative scope.
 
 
+## Done: RTL source linking and driver tracing
+
+`slang-netlist --save-netlist` supplies the whole design graph (statements,
+source lines, clock edges, registers, even the plain wires `--fan-in` can't
+see), parsed once in `src/netlist_graph.c`. On top of it: `src/cause_trace.c`
+(why a signal changed at a time, ranked by its inputs' own histories: clock
+edge, sampled-before-edge, same-time, held), `src/cause_trace_view.c`
+(expandable tree back to the stimulus, marker jump, source panel link),
+Go to Source (declaration + every driving statement) and the source panel's
+Add Signals on This Line (`src/source_link.c`). Tested GTK-free
+(`netlist_graph`, `cause_trace`) and live against a Verilator FST.
+
+Known gaps:
+- Whole signals only: a bit range is ignored, so a wide bus that is
+  assembled from several drivers shows them all.
+- A dump has no delta-cycle order, so a cause at the same timestamp as its
+  effect is inferred, not observed (the same limit as Event Sequence).
+- A clock gated through logic (`clk & en`) is traced to the gating signal,
+  not through it to the real clock.
+- The first run elaborates with a blocking `slang-netlist` call; a very
+  large design will freeze the window for that time.
+- Real/string-valued signals can't be explained (no history text).
+- Source Panel shows one file at a time; a cause in another module opens
+  that file but there is no back/forward history.
+- Not yet reachable from the menus or the waveform's right-click menu, only
+  from the Quick Format popover.
+
 ## Gap analysis: what an RTL designer / verification engineer still misses
 
 Ranked by how often the need comes up in debug, not by effort. Items
@@ -1372,12 +1399,12 @@ marked (D) have a design note or a partial foundation already.
 **Tier 1 -- daily debug loop**
 1. **Waveform compare** of two runs (golden vs. failing, or two seeds):
    aligned diff markers, "next difference", tolerance window. (existing #1)
-2. **Driver/load tracing on the waveform**: "who drove this value at this
+2. ~~**Driver/load tracing on the waveform**~~ (done, see above): "who drove this value at this
    time" -- jump from a signal's edge to the source line / driving
    always-block, then trace the cause backwards through the netlist
    (`slang-netlist --fan-in` already gives static cones; time-aware
    cause tracing on top is the missing piece).
-3. **Source-code linking**: click a signal/time to open the RTL line,
+3. ~~**Source-code linking**~~ (done: Go to Source and the reverse link; still open: values annotated for signals not already on the waveform): click a signal/time to open the RTL line,
    and a source view that annotates variables with values at the cursor
    time (needs dump-side file/line info or a slang-based symbol index).
 4. **Protocol decoders + transaction list / next-error** (D, 8 above).

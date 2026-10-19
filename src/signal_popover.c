@@ -14,6 +14,8 @@
 #include "netlist_query_ui.h"
 #include "signal_event_report.h"
 #include "event_sequence_view.h"
+#include "cause_trace_view.h"
+#include "source_link.h"
 #include "schematic_view.h"
 #include "derived_signals.h"
 #include "status.h"
@@ -293,6 +295,34 @@ static void on_show_event_sequence_clicked(GtkButton *button, gpointer user_data
     event_sequence_view_show();
 }
 
+static void on_go_to_source_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    if (t == NULL) {
+        return;
+    }
+    gchar *path = g_strdup(trace_full_path(t));
+    close_ancestor_popover(GTK_WIDGET(button));
+    source_link_go_to_signal(GTK_WIDGET(GLOBALS->signalarea), path);
+    g_free(path);
+}
+
+static void on_trace_cause_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    GwTrace *t = find_target_trace();
+    if (t == NULL) {
+        return;
+    }
+    gchar *path = g_strdup(trace_full_path(t));
+    close_ancestor_popover(GTK_WIDGET(button));
+    cause_trace_view_show(path);
+    g_free(path);
+}
+
 static void on_derived_signal_clicked(GtkButton *button, gpointer user_data)
 {
     (void)user_data;
@@ -461,6 +491,20 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
     g_signal_connect(
         event_sequence_button, "clicked", G_CALLBACK(on_show_event_sequence_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(box), event_sequence_button, FALSE, FALSE, 0);
+
+    GtkWidget *source_button = gtk_button_new_with_label("Go to Source");
+    gtk_widget_set_tooltip_text(
+        source_button,
+        "Open the RTL line that declares or drives this signal in the Source Panel");
+    g_signal_connect(source_button, "clicked", G_CALLBACK(on_go_to_source_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(box), source_button, FALSE, FALSE, 0);
+
+    GtkWidget *cause_button = gtk_button_new_with_label("Trace Cause");
+    gtk_widget_set_tooltip_text(
+        cause_button,
+        "Explain why this signal changed at the marker, and trace it back through the design");
+    g_signal_connect(cause_button, "clicked", G_CALLBACK(on_trace_cause_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(box), cause_button, FALSE, FALSE, 0);
 
     GtkWidget *derived_button = gtk_button_new_with_label("Derived Signal\xe2\x80\xa6");
     gtk_widget_set_tooltip_text(

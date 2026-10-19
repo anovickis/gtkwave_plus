@@ -49,6 +49,8 @@ Right-click a signal name in the name column and choose **Quick Format...**. It 
 - **RTL Schematic**: opens the pre-synthesis dataflow diagram; see [[RTL Dataflow Schematic]].
 - **Event Report**: see [[Signal Event Report]].
 - **Event Sequence**: see [[Event Sequence]].
+- **Go to Source**: opens the RTL line that declares or drives the signal; see [[Go to Source and Add Signals from Source]].
+- **Trace Cause**: explains why the signal changed at the marker; see [[Trace Cause]].
 - **Derived Signal...**: see [[Derived Signals]].
 - **Bus Operations**: **Create Bus (Down)**, **Create Bus (Up)**, **Expand as Sub-Bus...**, **Reverse Bit Order**, **Edit Bus Composition...**, **Define Struct Fields...**; see [[Bus Operations]] and [[Defining Struct Fields]].
 
@@ -440,6 +442,40 @@ Shows what changed at one instant, in what order, and what plausibly caused what
 
 See also: [[Signal Event Report]], [[Show Drivers and Show Loads]], [[Markers]]
 
+## Trace Cause
+keywords: trace cause, why did it change, root cause, driver tracing, backwards, stimulus, clock edge, sampled, register, causality, debug, who changed it
+Answers "why did this signal change here?" and lets you walk the answer back, step by step, to what started it.
+
+### Using it
+1. Put the primary marker on or just after the change you care about (see [[Markers]]).
+2. Right-click the signal, **Quick Format...**, and click **Trace Cause**. The first time, you are asked for the HDL sources ([[Configuring HDL Sources]]).
+3. The top row is the change being explained (its time and old to new value). Underneath are the signals that feed it. **Bold rows are the likely causes.**
+4. Expand any row to explain that signal's own change in turn. Repeat until you reach a signal driven from outside the design (a testbench input).
+
+### Reading the rows
+- **clock edge that fired it**: for a register, the clock or reset edge at that time.
+- **sampled value changed before the edge**: a register's data input that changed since the previous edge. A flop sees the value from just before its edge, so this is what it captured.
+- **changed at the same time**: for logic that is not a register, an input that changed at that instant.
+- **changed earlier (most recent)**: nothing moved at that instant, so the input that moved last is offered instead.
+- **changed at the edge itself**: an input that changed at the same instant as the register's clock edge. A flop did not see it, so it is not offered as the cause; it can point to a testbench race.
+- **held**: the input did not change; its value is shown, because a held enable or select is often the answer.
+- **not in the dump**: the signal was not recorded.
+
+### Moving around
+- Selecting a row opens the statement that links it to the signal below it in the [[Source Panel]].
+- Double-clicking a row moves the primary marker to that change.
+- **Add Signal** puts the selected row's signal on the waveform.
+- **At Marker** explains the same signal again at the marker's new position.
+- **Re-read Design** elaborates the HDL sources again after you edit them.
+
+### Notes
+- Needs slang-netlist and the sources ([[Configuring HDL Sources]]).
+- A dump has no delta-cycle order, so a cause at the same timestamp as its effect is inferred from the design rather than observed.
+- A signal's first value in the dump is its initial value; nothing changed it, and the window says so.
+- Works on whole signals; a bit range is ignored.
+
+See also: [[Event Sequence]], [[Go to Source and Add Signals from Source]], [[Show Drivers and Show Loads]]
+
 # Design Analysis
 
 ## Configuring HDL Sources
@@ -601,12 +637,29 @@ An embedded view of the design source, linked to the waveform.
 
 ### Using it
 - **View > Show Source Panel** shows it.
-- Clicking a source location in [[Show Drivers and Show Loads]] or a gate in the [[Gate-Level Schematic]] opens that file and line here.
+- Clicking a source location in [[Show Drivers and Show Loads]] or a gate in the [[Gate-Level Schematic]] opens that file and line here. So does **Go to Source** and selecting a row in [[Trace Cause]]; right-click and **Add Signals on This Line** goes the other way ([[Go to Source and Add Signals from Source]]).
 - Once the HDL sources are configured, a file list above the path lets you switch to another source file ([[Configuring HDL Sources]]).
 - For signals already displayed, their values at the cursor are shown beside the source and update as the cursor moves.
 - **Search > Open Source Definition** and **Open Source Instantiation** open the source for a scope selected in the hierarchy; they use the stems file read with **File > Read Verilog Stemsfile** (or the `-t` option).
 
 See also: [[Configuring HDL Sources]]
+
+## Go to Source and Add Signals from Source
+keywords: go to source, source link, declaration, driver, driven, line, add signals on this line, reverse link, rtl source, jump to code
+Link the waveform and the RTL in both directions.
+
+### From a signal to its source
+Right-click the signal, **Quick Format...**, **Go to Source**. A signal that has no driving statement (a port, for example) opens at its declaration. Otherwise a small menu lists **Declared** and every **Driven** line (each assignment that writes the signal); pick one to open it in the [[Source Panel]].
+
+### From a source line to signals
+Right-click in the [[Source Panel]] and choose **Add Signals on This Line**. The signals declared on that line, or assigned by the statement on it, are added to the end of the waveform. The status bar says how many were added and how many could not be found in the dump.
+
+### Notes
+- Needs slang-netlist and the sources ([[Configuring HDL Sources]]). The design is read once and reused until the sources change; **Re-read Design** in [[Trace Cause]] forces a fresh read.
+- The line is the one under the text cursor; a right-click moves it.
+- A plain wire that only joins two instances is recognized by name, so it can be traced and opened, but it has no declaration line of its own.
+
+See also: [[Trace Cause]], [[Show Drivers and Show Loads]]
 
 # Live Dumps and Automation
 
@@ -681,6 +734,7 @@ Gathered from the topics above.
 - **Auto Update**: FST only; a reload per update.
 - **Gate-level schematic**: needs synthesizable RTL; dissolving an instance cannot show its whole interior automatically, so expand its ports individually; expansions and filters last as long as the window.
 - **Schematic layout**: simple redrawn curves; only the RTL view; needs SVG support in gdk-pixbuf.
+- **Trace Cause**: whole signals only; no delta-cycle order, so a same-timestamp cause is inferred; only signals the dump recorded can be explained; the design is elaborated by a blocking call the first time.
 - **Compress Time Range**: needs both markers.
 - **Structs**: **Add as Struct** needs the dump to record the struct (Verilator: `--trace-structs`); field order is read from FST or VCD headers, not GHW; whether a struct is packed is your choice. **Define Struct Fields** divides one level at a time and only a bus, not a group.
 

@@ -8,6 +8,7 @@
 // to and highlight one line" doesn't need anything more than a GtkTextTag.
 
 #include "source_panel.h"
+#include "source_link.h"
 #include "globals.h"
 #include "signal_value_lookup.h"
 #include <string.h>
@@ -442,6 +443,41 @@ static gboolean on_source_extend_selection(GtkTextView *text_view,
     return TRUE;
 }
 
+// Right-click: "Add Signals on This Line" puts the signals declared or
+// assigned on the line under the text cursor (a right-click moves it) on
+// the waveform, matched through the design's netlist.
+static void on_source_add_line_signals(GtkMenuItem *item, gpointer data)
+{
+    (void)item;
+    (void)data;
+    if (GLOBALS->source_last_path == NULL) {
+        return;
+    }
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(GLOBALS->source_text_view));
+    GtkTextIter iter;
+    gtk_text_buffer_get_iter_at_mark(buffer, &iter, gtk_text_buffer_get_insert(buffer));
+    source_link_add_signals_at_line(
+        GTK_WINDOW(gtk_widget_get_toplevel(GLOBALS->source_text_view)),
+        GLOBALS->source_last_path,
+        (guint)gtk_text_iter_get_line(&iter) + 1);
+}
+
+static void on_source_populate_popup(GtkTextView *view, GtkWidget *popup, gpointer data)
+{
+    (void)view;
+    (void)data;
+    if (!GTK_IS_MENU_SHELL(popup)) {
+        return;
+    }
+    GtkWidget *sep = gtk_separator_menu_item_new();
+    GtkWidget *item = gtk_menu_item_new_with_label("Add Signals on This Line");
+    g_signal_connect(item, "activate", G_CALLBACK(on_source_add_line_signals), NULL);
+    gtk_menu_shell_append(GTK_MENU_SHELL(popup), sep);
+    gtk_menu_shell_append(GTK_MENU_SHELL(popup), item);
+    gtk_widget_show(sep);
+    gtk_widget_show(item);
+}
+
 GtkWidget *create_source_panel(void)
 {
     GLOBALS->source_file_combo = gtk_combo_box_text_new();
@@ -470,6 +506,7 @@ GtkWidget *create_source_panel(void)
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text), GTK_WRAP_NONE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(text), TRUE);
     g_signal_connect(text, "extend-selection", G_CALLBACK(on_source_extend_selection), NULL);
+    g_signal_connect(text, "populate-popup", G_CALLBACK(on_source_populate_popup), NULL);
 
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text));
     GLOBALS->source_highlight_tag = gtk_text_buffer_create_tag(buffer,
