@@ -1357,7 +1357,61 @@ the conversation history for the full reasoning behind this ordering.
     (`perf_event_paranoid >= 2`). Revisit only with a profile showing a
     real redraw bottleneck on a dense dump.
 
-8. **Transaction/protocol-aware decoding** (a pluggable bus-protocol
+8. **Transaction/protocol-aware decoding** -- design pass done, see
+    `docs/design/protocol-decoding.md` (a pluggable bus-protocol
     decoder on top of the existing `TR_TTRANSLATED` transaction-trace
     support). A genuinely new capability class; valuable but large,
     speculative scope.
+
+
+## Gap analysis: what an RTL designer / verification engineer still misses
+
+Ranked by how often the need comes up in debug, not by effort. Items
+marked (D) have a design note or a partial foundation already.
+
+**Tier 1 -- daily debug loop**
+1. **Waveform compare** of two runs (golden vs. failing, or two seeds):
+   aligned diff markers, "next difference", tolerance window. (existing #1)
+2. **Driver/load tracing on the waveform**: "who drove this value at this
+   time" -- jump from a signal's edge to the source line / driving
+   always-block, then trace the cause backwards through the netlist
+   (`slang-netlist --fan-in` already gives static cones; time-aware
+   cause tracing on top is the missing piece).
+3. **Source-code linking**: click a signal/time to open the RTL line,
+   and a source view that annotates variables with values at the cursor
+   time (needs dump-side file/line info or a slang-based symbol index).
+4. **Protocol decoders + transaction list / next-error** (D, 8 above).
+5. **Assertion / SVA / UVM-log correlation**: import simulator log
+   lines (`[time] severity msg`) as a navigable marker track, with
+   next/previous error. Cheap and very high value.
+
+**Tier 2 -- navigation and analysis**
+6. **Signal-condition search across several signals** (e.g. "valid &&
+   !ready for > 20 cycles") -- the derived-signal evaluator (done) is the
+   engine; missing is a UI to find the next time it is true.
+7. **Clock-aware views**: cycle counter ruler, sample-on-clock-edge
+   "synchronous" view, jump N cycles, and clock-domain-crossing hints.
+8. **Statistics on a signal**: toggle counts, duty cycle, min/max/avg of
+   a bus, histogram; also coverage-style "never toggled" list for
+   bring-up (FST gives toggles cheaply).
+9. **FSM view**: recognise state registers (slang `--report-registers`
+   plus enum info) and show a state-transition list / diagram with
+   times, linking back to waves.
+10. **Enum / typedef display from the source** rather than hand-made
+    translate files (FST has enum tables for some tools; Verilator
+    omits them -- source parsing via slang could supply them).
+
+**Tier 3 -- workflow and scale**
+11. **Signal-set templates / save-restore per design** with
+    wildcard-based re-binding to another hierarchy path (reuse one .gtkw
+    across instances or projects).
+12. **Memory / array viewer** (2-D table at cursor time), not just
+    flattened array elements.
+13. **Large-dump responsiveness**: background loading with progress,
+    lazy hierarchy, mmap; Auto Update for VCD (open item).
+14. **Batch / scripted use**: headless "render these signals/time range
+    to PNG/SVG", and a documented command interface for regressions.
+15. **Power/UPF, analog-mixed-signal** overlays -- niche, last.
+
+Recommended next order: 5 (log correlation, small) -> 6 (condition
+search, reuses derived engine) -> 4 (APB first) -> 1 -> 2/3.
