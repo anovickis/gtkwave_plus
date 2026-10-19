@@ -1391,6 +1391,23 @@ Known gaps:
 - Not yet reachable from the menus or the waveform's right-click menu, only
   from the Quick Format popover.
 
+## Done: Find Condition (multi-signal condition search)
+
+`src/condition_search.c` (GTK-free: Verilog truth, intervals, minimum
+duration, next/previous) on top of the derived-signal evaluator
+(`derived_signal_evaluate()`, split out of `derived_signal_add()`), and
+`src/condition_search_view.c` (window, Next/Previous, Add as Signal), from
+the Quick Format popover. Marker moves now scroll the view
+(`source_link_set_marker_time()`, shared with Trace Cause).
+
+Known gaps:
+- Whole-dump only; no "within the visible range" or "between markers".
+- Level conditions only: no edge/sequence operators (`a ##1 b`, `$rose`).
+  `valid && !ready` works; "ready rose while valid" does not directly.
+- Minimum duration only, no "at most" or exact length.
+- A derived signal can't be an operand (derived-engine limit).
+- Reachable only from the Quick Format popover, not a menu.
+
 ## Gap analysis: what an RTL designer / verification engineer still misses
 
 Ranked by how often the need comes up in debug, not by effort. Items
@@ -1413,7 +1430,7 @@ marked (D) have a design note or a partial foundation already.
    next/previous error. Cheap and very high value.
 
 **Tier 2 -- navigation and analysis**
-6. **Signal-condition search across several signals** (e.g. "valid &&
+6. ~~**Signal-condition search across several signals**~~ (done, see above) (e.g. "valid &&
    !ready for > 20 cycles") -- the derived-signal evaluator (done) is the
    engine; missing is a UI to find the next time it is true.
 7. **Clock-aware views**: cycle counter ruler, sample-on-clock-edge

@@ -9,6 +9,7 @@
 #include "netlist_query_ui.h"
 #include "source_panel.h"
 #include "status.h"
+#include "time_compress.h"
 
 /* ------------------------------------------------------------- graph -- */
 
@@ -387,5 +388,21 @@ void source_link_set_marker_time(gint64 time)
     gw_marker_set_position(primary, (GwTime)(time + (gint64)GLOBALS->shift_timebase));
     gw_marker_set_enabled(primary, TRUE);
     update_time_box();
+
+    // Bring the marker into view, as Search > Next Edge does.
+    GwTime pos = gw_marker_get_position(primary);
+    GwTime width = gw_time_page_increment();
+    if (pos >= GLOBALS->tims.first && pos <= GLOBALS->tims.last &&
+        (pos < GLOBALS->tims.start || pos >= GLOBALS->tims.start + width)) {
+        GLOBALS->tims.start = time_trunc(pos - (width / 2));
+        if (GLOBALS->tims.start + width > GLOBALS->tims.last) {
+            GLOBALS->tims.start = GLOBALS->tims.last - width;
+        }
+        if (GLOBALS->tims.start < GLOBALS->tims.first) {
+            GLOBALS->tims.start = GLOBALS->tims.first;
+        }
+        gtk_adjustment_set_value(GTK_ADJUSTMENT(GLOBALS->wave_hslider),
+                                 GLOBALS->tims.timecache = GLOBALS->tims.start);
+    }
     redraw_signals_and_waves();
 }

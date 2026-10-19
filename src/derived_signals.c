@@ -238,19 +238,22 @@ static DerivedSignal *build_signal(const gchar *name, const gchar *expression,
 
 /* --------------------------------------------------------------- add -- */
 
-static gboolean compute_signal(const gchar *name, const gchar *expression, GHashTable *aliases,
-                               DerivedSignal **out, gchar **out_canonical, GError **error)
+// Parses `expression` and evaluates it over the loaded dump. On success
+// returns the result history and, if `canonical` is non-NULL, the canonical
+// expression text.
+static DerivedSeries *evaluate_text(const gchar *expression, GHashTable *aliases,
+                                    gchar **canonical, GError **error)
 {
     if (GLOBALS->dump_file == NULL) {
         g_set_error_literal(error, DERIVED_EXPR_ERROR, DERIVED_EXPR_ERROR_UNSUPPORTED,
                             "No dump file is loaded.");
-        return FALSE;
+        return NULL;
     }
 
     ResolveCtx ctx = {.aliases = aliases};
     DerivedExpr *expr = derived_expr_parse(expression, resolve_signal, &ctx, error);
     if (expr == NULL) {
-        return FALSE;
+        return NULL;
     }
 
     GPtrArray *refs = derived_expr_references(expr);
@@ -287,17 +290,11 @@ static gboolean compute_signal(const gchar *name, const gchar *expression, GHash
     DerivedSeries *result = NULL;
     if (ok) {
         result = derived_expr_evaluate(expr, inputs, refs->len, error);
-        ok = result != NULL;
+    }
+    if (result != NULL && canonical != NULL) {
+        *canonical = derived_expr_to_string(expr);
     }
 
-    if (ok) {
-        gchar *canonical = derived_expr_to_string(expr);
-        const gchar *shown = (name != NULL && name[0] != '\0') ? name : expression;
-        *out = build_signal(shown, canonical, result);
-        *out_canonical = canonical;
-    }
-
-    derived_series_free(result);
     for (guint i = 0; i < refs->len; i++) {
         derived_series_free(series[i]);
     }
@@ -305,7 +302,27 @@ static gboolean compute_signal(const gchar *name, const gchar *expression, GHash
     g_free(inputs);
     g_ptr_array_unref(refs);
     derived_expr_free(expr);
-    return ok;
+    return result;
+}
+
+DerivedSeries *derived_signal_evaluate(const gchar *expression, GHashTable *aliases, GError **error)
+{
+    return evaluate_text(expression, aliases, NULL, error);
+}
+
+static gboolean compute_signal(const gchar *name, const gchar *expression, GHashTable *aliases,
+                               DerivedSignal **out, gchar **out_canonical, GError **error)
+{
+    gchar *canonical = NULL;
+    DerivedSeries *result = evaluate_text(expression, aliases, &canonical, error);
+    if (result == NULL) {
+        return FALSE;
+    }
+    const gchar *shown = (name != NULL && name[0] != '\0') ? name : expression;
+    *out = build_signal(shown, canonical, result);
+    *out_canonical = canonical;
+    derived_series_free(result);
+    return TRUE;
 }
 
 gboolean derived_signal_add(const gchar *name, const gchar *expression, GHashTable *aliases,
@@ -438,6 +455,41 @@ static gchar *leaf_of(const gchar *full)
     return leaf;
 }
 
+// Offers every highlighted plain signal under its leaf name (when that's
+// unique among them) and as s1, s2, ...
+GHashTable *derived_signal_highlight_aliases(GString *listing)
+{
+    GHashTable *aliases = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    GHashTable *leaf_count = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    GPtrArray *chosen = g_ptr_array_new();
+    for (GwTrace *t = GLOBALS->traces.first; t != NULL; t = t->t_next) {
+        if ((t->flags & TR_HIGHLIGHT) && !(t->flags & (TR_BLANK | TR_ANALOG_BLANK_STRETCH)) &&
+            !t->vector && t->n.nd != NULL && !derived_signal_is_derived(t->n.nd)) {
+            g_ptr_array_add(chosen, t->n.nd);
+            gchar *leaf = leaf_of(t->n.nd->nname);
+            gpointer n = g_hash_table_lookup(leaf_count, leaf);
+            g_hash_table_insert(leaf_count, leaf, GUINT_TO_POINTER(GPOINTER_TO_UINT(n) + 1));
+        }
+    }
+    for (guint i = 0; i < chosen->len; i++) {
+        GwNode *nd = g_ptr_array_index(chosen, i);
+        gchar *leaf = leaf_of(nd->nname);
+        gchar *sn = g_strdup_printf("s%u", i + 1);
+        g_hash_table_insert(aliases, g_strdup(sn), g_strdup(nd->nname));
+        if (GPOINTER_TO_UINT(g_hash_table_lookup(leaf_count, leaf)) == 1) {
+            g_hash_table_insert(aliases, g_strdup(leaf), g_strdup(nd->nname));
+            g_string_append_printf(listing, "  %s  (or %s)  =  %s\n", leaf, sn, nd->nname);
+        } else {
+            g_string_append_printf(listing, "  %s  =  %s\n", sn, nd->nname);
+        }
+        g_free(leaf);
+        g_free(sn);
+    }
+    g_hash_table_unref(leaf_count);
+    g_ptr_array_unref(chosen);
+    return aliases;
+}
+
 static void on_apply(GtkWidget *widget, gpointer data)
 {
     (void)widget;
@@ -470,38 +522,8 @@ void derived_signal_show_dialog(void)
     }
 
     DialogState *state = g_new0(DialogState, 1);
-    state->aliases = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-
-    // Offer every highlighted plain signal under its leaf name (when that's
-    // unique among them) and as s1, s2, ...
     GString *listing = g_string_new(NULL);
-    GHashTable *leaf_count = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    GPtrArray *chosen = g_ptr_array_new();
-    for (GwTrace *t = GLOBALS->traces.first; t != NULL; t = t->t_next) {
-        if ((t->flags & TR_HIGHLIGHT) && !(t->flags & (TR_BLANK | TR_ANALOG_BLANK_STRETCH)) &&
-            !t->vector && t->n.nd != NULL && !derived_signal_is_derived(t->n.nd)) {
-            g_ptr_array_add(chosen, t->n.nd);
-            gchar *leaf = leaf_of(t->n.nd->nname);
-            gpointer n = g_hash_table_lookup(leaf_count, leaf);
-            g_hash_table_insert(leaf_count, leaf, GUINT_TO_POINTER(GPOINTER_TO_UINT(n) + 1));
-        }
-    }
-    for (guint i = 0; i < chosen->len; i++) {
-        GwNode *nd = g_ptr_array_index(chosen, i);
-        gchar *leaf = leaf_of(nd->nname);
-        gchar *sn = g_strdup_printf("s%u", i + 1);
-        g_hash_table_insert(state->aliases, g_strdup(sn), g_strdup(nd->nname));
-        if (GPOINTER_TO_UINT(g_hash_table_lookup(leaf_count, leaf)) == 1) {
-            g_hash_table_insert(state->aliases, g_strdup(leaf), g_strdup(nd->nname));
-            g_string_append_printf(listing, "  %s  (or %s)  =  %s\n", leaf, sn, nd->nname);
-        } else {
-            g_string_append_printf(listing, "  %s  =  %s\n", sn, nd->nname);
-        }
-        g_free(leaf);
-        g_free(sn);
-    }
-    g_hash_table_unref(leaf_count);
-    g_ptr_array_unref(chosen);
+    state->aliases = derived_signal_highlight_aliases(listing);
 
     state->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(state->window), "Add Derived Signal");

@@ -51,6 +51,7 @@ Right-click a signal name in the name column and choose **Quick Format...**. It 
 - **Event Sequence**: see [[Event Sequence]].
 - **Go to Source**: opens the RTL line that declares or drives the signal; see [[Go to Source and Add Signals from Source]].
 - **Trace Cause**: explains why the signal changed at the marker; see [[Trace Cause]].
+- **Find Condition...**: see [[Find Condition]].
 - **Derived Signal...**: see [[Derived Signals]].
 - **Bus Operations**: **Create Bus (Down)**, **Create Bus (Up)**, **Expand as Sub-Bus...**, **Reverse Bit Order**, **Edit Bus Composition...**, **Define Struct Fields...**; see [[Bus Operations]] and [[Defining Struct Fields]].
 
@@ -442,6 +443,29 @@ Shows what changed at one instant, in what order, and what plausibly caused what
 
 See also: [[Signal Event Report]], [[Show Drivers and Show Loads]], [[Markers]]
 
+## Find Condition
+keywords: find condition, condition search, when is, expression, valid ready, stall, handshake, interval, duration, next time true, multi-signal search, trigger
+Finds every time an expression over several signals is true, and steps the marker through them. Use it for questions like "when is `valid` high while `ready` is low?".
+
+### Using it
+1. Right-click any signal, **Quick Format...**, **Find Condition...**.
+2. Type a condition, for example `tb.valid && !tb.ready`, or `count == 8'hFF`. Highlight signals first to use their short names (`valid && !ready`); the window lists which names are available.
+3. Optionally type **For at least** with a unit, such as `200 ns`, to keep only conditions that hold that long. Leave it blank for any length, including a single instant.
+4. Click **Find** (or press Enter). The list shows each interval's start, end and length, and the marker jumps to the first one at or after where it was.
+5. **Next** and **Previous** move the marker from interval to interval; double-clicking a row jumps to it. The view scrolls to keep the marker visible.
+6. **Add as Signal** shows the condition on the waveform as a [[Derived Signals]] trace, so you can see it next to the signals it uses.
+
+### What counts as true
+The condition uses the same language as [[Derived Signal Expression Language]]. The result is true where any bit of it is 1. All zeros is false. If it is unknown (X or Z) with no 1 in it, it counts as not true, and the summary says how many times that happened, so a condition that was never really evaluated does not look like one that failed.
+
+### Notes
+- An interval that is still true at the end of the dump is marked **(to end)** and runs to the last time.
+- At most 5000 rows are listed; **Next** and **Previous** still reach every interval.
+- Searches the whole dump; it does not use the current zoom range.
+- Not available for real or string signals, or for derived signals as operands (see [[Derived Signals]]).
+
+See also: [[Pattern Search]], [[Trace Cause]], [[Event Sequence]]
+
 ## Trace Cause
 keywords: trace cause, why did it change, root cause, driver tracing, backwards, stimulus, clock edge, sampled, register, causality, debug, who changed it
 Answers "why did this signal change here?" and lets you walk the answer back, step by step, to what started it.
@@ -734,6 +758,7 @@ Gathered from the topics above.
 - **Auto Update**: FST only; a reload per update.
 - **Gate-level schematic**: needs synthesizable RTL; dissolving an instance cannot show its whole interior automatically, so expand its ports individually; expansions and filters last as long as the window.
 - **Schematic layout**: simple redrawn curves; only the RTL view; needs SVG support in gdk-pixbuf.
+- **Find Condition**: searches the whole dump; lists at most 5000 intervals; X/Z counts as not true; same operand limits as derived signals.
 - **Trace Cause**: whole signals only; no delta-cycle order, so a same-timestamp cause is inferred; only signals the dump recorded can be explained; the design is elaborated by a blocking call the first time.
 - **Compress Time Range**: needs both markers.
 - **Structs**: **Add as Struct** needs the dump to record the struct (Verilator: `--trace-structs`); field order is read from FST or VCD headers, not GHW; whether a struct is packed is your choice. **Define Struct Fields** divides one level at a time and only a bus, not a group.

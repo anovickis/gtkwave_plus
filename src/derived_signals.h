@@ -3,6 +3,7 @@
 #include <glib.h>
 #include <stdio.h>
 
+#include "derived_expr.h"
 #include "gtkwave.h"
 
 // Derived ("virtual") signals: a user-written expression over existing
@@ -30,6 +31,18 @@ gboolean derived_signal_add(const gchar *name,
                             const gchar *expression,
                             GHashTable *aliases,
                             GError **error);
+
+// Evaluates an expression over the loaded dump without adding anything to
+// the waveform; same language, aliases and errors as derived_signal_add().
+// Caller frees with derived_series_free().
+DerivedSeries *derived_signal_evaluate(const gchar *expression,
+                                       GHashTable *aliases,
+                                       GError **error);
+
+// Short names for the highlighted plain signals (leaf name when unique, and
+// s1, s2, ...) -> full name, for use as `aliases`. If `listing` is non-NULL
+// a human-readable list of them is appended.
+GHashTable *derived_signal_highlight_aliases(GString *listing);
 
 // TRUE if `node` is a derived signal's node.
 gboolean derived_signal_is_derived(GwNode *node);

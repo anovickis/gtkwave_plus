@@ -46,5 +46,6 @@ gchar *source_link_format_time(gint64 time);
 // Time of the primary marker in history units, or the start of the dump.
 gint64 source_link_marker_time(void);
 
-// Moves the primary marker to `time` (history units) and redraws.
+// Moves the primary marker to `time` (history units), scrolls it into view
+// if it is off screen, and redraws.
 void source_link_set_marker_time(gint64 time);

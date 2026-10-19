@@ -30,6 +30,8 @@ gtkwave_sources = [
     'netlist_graph.c',
     'cause_trace.c',
     'cause_trace_view.c',
+    'condition_search.c',
+    'condition_search_view.c',
     'source_link.c',
     'dump_file_main.c',
     'fetchbuttons.c',
@@ -219,6 +221,14 @@ derived_expr_test = executable(
     c_args: warning_args,
 )
 test('derived_expr', derived_expr_test)
+
+condition_search_test = executable(
+    'condition_search_test',
+    ['condition_search.c', 'derived_expr.c', 'condition_search_test.c'],
+    dependencies: [glib_dep],
+    c_args: warning_args,
+)
+test('condition_search', condition_search_test)
 
 help_doc_test = executable(
     'help_doc_test',

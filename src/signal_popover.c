@@ -15,6 +15,7 @@
 #include "signal_event_report.h"
 #include "event_sequence_view.h"
 #include "cause_trace_view.h"
+#include "condition_search_view.h"
 #include "source_link.h"
 #include "schematic_view.h"
 #include "derived_signals.h"
@@ -323,6 +324,14 @@ static void on_trace_cause_clicked(GtkButton *button, gpointer user_data)
     g_free(path);
 }
 
+static void on_find_condition_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)user_data;
+
+    close_ancestor_popover(GTK_WIDGET(button));
+    condition_search_view_show();
+}
+
 static void on_derived_signal_clicked(GtkButton *button, gpointer user_data)
 {
     (void)user_data;
@@ -505,6 +514,13 @@ void signal_popover_show(GtkWidget *relative_to, gdouble x, gdouble y)
         "Explain why this signal changed at the marker, and trace it back through the design");
     g_signal_connect(cause_button, "clicked", G_CALLBACK(on_trace_cause_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(box), cause_button, FALSE, FALSE, 0);
+
+    GtkWidget *condition_button = gtk_button_new_with_label("Find Condition\xe2\x80\xa6");
+    gtk_widget_set_tooltip_text(
+        condition_button,
+        "Find when an expression over signals is true, e.g. valid && !ready, and step through it");
+    g_signal_connect(condition_button, "clicked", G_CALLBACK(on_find_condition_clicked), NULL);
+    gtk_box_pack_start(GTK_BOX(box), condition_button, FALSE, FALSE, 0);
 
     GtkWidget *derived_button = gtk_button_new_with_label("Derived Signal\xe2\x80\xa6");
     gtk_widget_set_tooltip_text(
